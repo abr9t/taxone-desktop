@@ -21,6 +21,7 @@
     "axios": "^1.7.0",
     "chokidar": "^4.0.0",
     "electron-store": "^8.2.0",
-    "keytar": "^7.9.0"
+    "keytar": "^7.9.0",
+    "uuid": "^13.0.0"
   }
 }

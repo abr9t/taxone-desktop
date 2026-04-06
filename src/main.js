@@ -3,11 +3,15 @@ const path = require('path');
 const auth = require('./auth');
 const watcher = require('./watcher');
 const uploader = require('./uploader');
+const { MigrationQueue } = require('./migration');
+const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
 
 let tray = null;
 let loginWindow = null;
 let settingsWindow = null;
 let confirmWindow = null;
+let migrationWindow = null;
+let migrationQueue = null;
 
 // Queue of files pending confirmation — managed here, not in renderer
 const pendingFiles = [];
@@ -37,6 +41,7 @@ app.whenReady().then(async () => {
             showLogin();
         } else {
             startWatching();
+            initMigrationQueue();
         }
     }
 });
@@ -86,6 +91,8 @@ function updateTrayMenu(status) {
             click: () => { if (watchPath) shell.openPath(watchPath); },
         },
         { label: 'Settings...', click: () => showSettings() },
+        { type: 'separator' },
+        { label: 'File Migration Tool', click: () => showMigrationTool() },
         { type: 'separator' },
         {
             label: 'Sign Out',
@@ -172,6 +179,31 @@ function showConfirmUpload() {
     confirmWindow.on('closed', () => { confirmWindow = null; });
 }
 
+function showMigrationTool() {
+    if (migrationWindow && !migrationWindow.isDestroyed()) {
+        migrationWindow.focus();
+        return;
+    }
+
+    migrationWindow = new BrowserWindow({
+        width: 900,
+        height: 680,
+        minWidth: 700,
+        minHeight: 500,
+        title: 'TaxOne — File Migration',
+        icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+        webPreferences: {
+            preload: path.join(__dirname, 'preload-migration.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+        },
+    });
+
+    migrationWindow.setMenuBarVisibility(false);
+    migrationWindow.loadFile(path.join(__dirname, 'renderer', 'migration.html'));
+    migrationWindow.on('closed', () => { migrationWindow = null; });
+}
+
 // ─── File Queue ───────────────────────────────────────────────────
 
 function enqueueFile(fileInfo) {
@@ -179,6 +211,34 @@ function enqueueFile(fileInfo) {
     console.log(`[queue] Added: ${fileInfo.fileName} (${pendingFiles.length} pending)`);
     updateTrayMenu('watching');
     showConfirmUpload();
+}
+
+function initMigrationQueue() {
+    if (migrationQueue) return; // already initialized
+
+    const uploadFn = createMigrationUploadFn(uploader);
+
+    migrationQueue = new MigrationQueue({
+        uploadFn,
+        concurrency: 3,
+        maxRetries: 3,
+        onProgress: (stats) => {
+            if (migrationWindow && !migrationWindow.isDestroyed()) {
+                migrationWindow.webContents.send('migration:progress', stats);
+            }
+            if (stats.queueStatus === 'running' && tray) {
+                tray.setToolTip(`TaxOne — Migrating: ${stats.completed}/${stats.total} (${stats.percent}%)`);
+            }
+        },
+        onFileUpdate: (file) => {
+            if (migrationWindow && !migrationWindow.isDestroyed()) {
+                migrationWindow.webContents.send('migration:file-update', file);
+            }
+        },
+    });
+
+    registerMigrationIPC(migrationQueue, () => migrationWindow, uploader);
+    migrationQueue.autoResume();
 }
 
 function dequeueFile() {
@@ -234,6 +294,7 @@ ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
         if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
 
         startWatching();
+        initMigrationQueue();
         return { success: true };
     } catch (err) {
         return { success: false, error: err.message };

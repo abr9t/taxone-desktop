@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+    <title>TaxOne — File Migration</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --navy: #1e293b;
+            --navy-light: #334155;
+            --amber: #f59e0b;
+            --amber-hover: #d97706;
+            --green: #22c55e;
+            --red: #ef4444;
+            --gray-50: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --gray-700: #334155;
+            --gray-800: #1e293b;
+            --gray-900: #0f172a;
+            --radius: 8px;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--gray-50);
+            color: var(--gray-800);
+            font-size: 13px;
+            line-height: 1.5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            -webkit-app-region: drag;
+        }
+
+        /* ── Header ─────────────────────────────────────── */
+        .header {
+            background: var(--navy);
+            color: white;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            -webkit-app-region: drag;
+        }
+        .header h1 { font-size: 15px; font-weight: 600; }
+        .header .subtitle { font-size: 11px; color: var(--gray-400); }
+
+        /* ── Tabs ───────────────────────────────────────── */
+        .tabs {
+            display: flex;
+            background: white;
+            border-bottom: 1px solid var(--gray-200);
+            -webkit-app-region: no-drag;
+        }
+        .tab {
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--gray-500);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+        }
+        .tab:hover { color: var(--gray-700); }
+        .tab.active { color: var(--amber); border-bottom-color: var(--amber); }
+        .tab .badge {
+            display: inline-block;
+            background: var(--gray-200);
+            color: var(--gray-600);
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 10px;
+            margin-left: 6px;
+        }
+        .tab.active .badge { background: #fef3c7; color: var(--amber-hover); }
+
+        /* ── Content ────────────────────────────────────── */
+        .content {
+            flex: 1;
+            overflow: hidden;
+            -webkit-app-region: no-drag;
+        }
+        .panel { display: none; height: 100%; flex-direction: column; }
+        .panel.active { display: flex; }
+
+        /* ── Drop Zone ──────────────────────────────────── */
+        .drop-zone {
+            border: 2px dashed var(--gray-300);
+            border-radius: var(--radius);
+            padding: 48px 24px;
+            text-align: center;
+            margin: 20px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--amber);
+            background: #fffbeb;
+        }
+        .drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
+        .drop-zone h3 { font-size: 15px; margin-bottom: 4px; }
+        .drop-zone p { color: var(--gray-500); font-size: 12px; }
+        .drop-zone .or { color: var(--gray-400); margin: 12px 0; font-size: 12px; }
+
+        /* ── Buttons ────────────────────────────────────── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: var(--navy); color: white; }
+        .btn-primary:hover:not(:disabled) { background: var(--navy-light); }
+        .btn-amber { background: var(--amber); color: white; }
+        .btn-amber:hover:not(:disabled) { background: var(--amber-hover); }
+        .btn-outline { background: white; border: 1px solid var(--gray-300); color: var(--gray-700); }
+        .btn-outline:hover:not(:disabled) { background: var(--gray-100); }
+        .btn-danger { background: var(--red); color: white; }
+        .btn-danger:hover:not(:disabled) { background: #dc2626; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-link { background: none; border: none; color: var(--amber); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+        .btn-link:hover { text-decoration: underline; }
+
+        /* ── Progress Bar ───────────────────────────────── */
+        .progress-section {
+            background: white;
+            border-bottom: 1px solid var(--gray-200);
+            padding: 16px 20px;
+        }
+        .progress-bar-wrap {
+            height: 8px;
+            background: var(--gray-200);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--green);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        .progress-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: var(--gray-500);
+        }
+        .progress-stats .stat { display: flex; align-items: center; gap: 4px; }
+        .progress-stats .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block;
+        }
+        .dot-completed { background: var(--green); }
+        .dot-pending { background: var(--gray-400); }
+        .dot-failed { background: var(--red); }
+        .dot-uploading { background: var(--amber); }
+
+        .progress-controls { display: flex; gap: 8px; margin-top: 10px; }
+
+        /* ── Matching Table ──────────────────────────────── */
+        .matching-section { flex: 1; overflow: auto; padding: 0 20px 20px; }
+        .match-table { width: 100%; border-collapse: collapse; }
+        .match-table th {
+            text-align: left;
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--gray-500);
+            border-bottom: 1px solid var(--gray-200);
+            position: sticky;
+            top: 0;
+            background: var(--gray-50);
+        }
+        .match-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--gray-100);
+            vertical-align: middle;
+        }
+        .match-exact { color: var(--green); font-weight: 500; }
+        .match-fuzzy { color: var(--amber); font-weight: 500; }
+        .match-unmatched { color: var(--red); font-weight: 500; }
+
+        .client-select {
+            padding: 4px 8px;
+            border: 1px solid var(--gray-300);
+            border-radius: 4px;
+            font-size: 12px;
+            min-width: 200px;
+        }
+
+        .match-actions { display: flex; gap: 8px; padding: 12px 20px; background: white; border-top: 1px solid var(--gray-200); }
+
+        /* ── File List ──────────────────────────────────── */
+        .file-list { flex: 1; overflow: auto; }
+        .file-row {
+            display: flex;
+            align-items: center;
+            padding: 6px 20px;
+            border-bottom: 1px solid var(--gray-100);
+            gap: 10px;
+            font-size: 12px;
+        }
+        .file-row:hover { background: var(--gray-100); }
+        .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-client { width: 140px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-folder { width: 140px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-size { width: 60px; text-align: right; color: var(--gray-400); }
+        .file-status { width: 80px; text-align: center; }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .status-pending { background: var(--gray-200); color: var(--gray-600); }
+        .status-uploading { background: #fef3c7; color: var(--amber-hover); }
+        .status-completed { background: #dcfce7; color: #16a34a; }
+        .status-failed { background: #fef2f2; color: var(--red); }
+        .status-skipped { background: var(--gray-100); color: var(--gray-400); }
+
+        .file-actions { width: 60px; text-align: right; }
+
+        .file-error {
+            font-size: 11px;
+            color: var(--red);
+            padding: 2px 20px 6px 50px;
+            background: #fef2f2;
+        }
+
+        /* ── History ────────────────────────────────────── */
+        .history-list { flex: 1; overflow: auto; padding: 10px 20px; }
+        .history-row {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--gray-100);
+            gap: 10px;
+            font-size: 12px;
+        }
+        .history-filename { flex: 1; }
+        .history-client { color: var(--gray-500); width: 140px; }
+        .history-time { color: var(--gray-400); font-size: 11px; width: 120px; }
+
+        /* ── Toolbar ─────────────────────────────────────── */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: white;
+            border-bottom: 1px solid var(--gray-200);
+        }
+        .toolbar-spacer { flex: 1; }
+
+        /* ── Filter ──────────────────────────────────────── */
+        .filter-pills { display: flex; gap: 4px; }
+        .filter-pill {
+            padding: 4px 10px;
+            border: 1px solid var(--gray-200);
+            border-radius: 12px;
+            font-size: 11px;
+            cursor: pointer;
+            background: white;
+            color: var(--gray-600);
+        }
+        .filter-pill.active { background: var(--navy); color: white; border-color: var(--navy); }
+
+        /* ── Empty State ─────────────────────────────────── */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            color: var(--gray-400);
+            gap: 8px;
+        }
+        .empty-state .icon { font-size: 32px; }
+
+        /* ── Scanning animation ───────────────────────────── */
+        .scanning-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(255,255,255,0.9);
+            z-index: 100;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        .scanning-overlay.active { display: flex; }
+        .spinner {
+            width: 32px; height: 32px;
+            border: 3px solid var(--gray-200);
+            border-top-color: var(--amber);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <h1>📂 File Migration Tool</h1>
+        <div class="subtitle">Bulk import files from Canopy into TaxOne</div>
+    </div>
+</div>
+
+<div class="tabs">
+    <div class="tab active" data-tab="import" onclick="switchTab('import')">
+        Import
+    </div>
+    <div class="tab" data-tab="queue" onclick="switchTab('queue')">
+        Queue <span class="badge" id="queueBadge">0</span>
+    </div>
+    <div class="tab" data-tab="history" onclick="switchTab('history')">
+        History <span class="badge" id="historyBadge">0</span>
+    </div>
+</div>
+
+<div class="content">
+    <!-- ═══ IMPORT TAB ═══ -->
+    <div class="panel active" id="panel-import">
+        <!-- Step 1: Drop zone -->
+        <div id="step-drop">
+            <div class="drop-zone" id="dropZone">
+                <div class="icon">📁</div>
+                <h3>Drop your Canopy export folder here</h3>
+                <p>Expected structure: <strong>ClientName / SubFolder / file.pdf</strong></p>
+                <div class="or">— or —</div>
+                <button class="btn btn-outline" onclick="selectFolder()">Browse for Folder</button>
+            </div>
+        </div>
+
+        <!-- Step 2: Client matching -->
+        <div id="step-match" style="display:none; flex:1; flex-direction:column;">
+            <div class="toolbar">
+                <strong id="matchSummary">Matched 0 of 0 clients</strong>
+                <div class="toolbar-spacer"></div>
+                <button class="btn btn-sm btn-outline" onclick="backToDrop()">← Back</button>
+            </div>
+            <div class="matching-section">
+                <table class="match-table">
+                    <thead>
+                        <tr>
+                            <th>Folder Name</th>
+                            <th>Match</th>
+                            <th>TaxOne Client</th>
+                            <th>Files</th>
+                        </tr>
+                    </thead>
+                    <tbody id="matchBody"></tbody>
+                </table>
+            </div>
+            <div class="match-actions">
+                <button class="btn btn-amber" id="btnEnqueue" onclick="enqueueMatched()">
+                    Add Matched Files to Queue
+                </button>
+                <span id="enqueueInfo" style="font-size:12px; color:var(--gray-500); align-self:center;"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ QUEUE TAB ═══ -->
+    <div class="panel" id="panel-queue">
+        <div class="progress-section" id="progressSection">
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-fill" id="progressBar"></div>
+            </div>
+            <div class="progress-stats">
+                <div class="stat"><span class="dot dot-completed"></span> <span id="statCompleted">0</span> completed</div>
+                <div class="stat"><span class="dot dot-uploading"></span> <span id="statUploading">0</span> uploading</div>
+                <div class="stat"><span class="dot dot-pending"></span> <span id="statPending">0</span> pending</div>
+                <div class="stat"><span class="dot dot-failed"></span> <span id="statFailed">0</span> failed</div>
+                <div class="stat" style="color:var(--gray-700); font-weight:500;"><span id="statPercent">0</span>%</div>
+            </div>
+            <div class="progress-controls">
+                <button class="btn btn-sm btn-amber" id="btnStart" onclick="startQueue()">▶ Start</button>
+                <button class="btn btn-sm btn-outline" id="btnPause" onclick="pauseQueue()" style="display:none;">⏸ Pause</button>
+                <button class="btn btn-sm btn-outline" id="btnRetryAll" onclick="retryAllFailed()">↻ Retry Failed</button>
+                <div class="toolbar-spacer"></div>
+                <button class="btn btn-sm btn-outline" id="btnClear" onclick="clearQueue()">Clear Queue</button>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <div class="filter-pills">
+                <button class="filter-pill active" data-filter="all" onclick="setFilter('all')">All</button>
+                <button class="filter-pill" data-filter="pending" onclick="setFilter('pending')">Pending</button>
+                <button class="filter-pill" data-filter="uploading" onclick="setFilter('uploading')">Uploading</button>
+                <button class="filter-pill" data-filter="failed" onclick="setFilter('failed')">Failed</button>
+                <button class="filter-pill" data-filter="completed" onclick="setFilter('completed')">Completed</button>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <span id="filterCount" style="font-size:11px; color:var(--gray-400);"></span>
+        </div>
+
+        <div class="file-list" id="fileList">
+            <div class="empty-state">
+                <div class="icon">📋</div>
+                <div>No files in queue</div>
+                <div style="font-size:11px;">Drop a folder in the Import tab to get started</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ HISTORY TAB ═══ -->
+    <div class="panel" id="panel-history">
+        <div class="toolbar">
+            <strong>Upload History</strong>
+            <div class="toolbar-spacer"></div>
+        </div>
+        <div class="history-list" id="historyList">
+            <div class="empty-state">
+                <div class="icon">📜</div>
+                <div>No uploads yet</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scanning overlay -->
+<div class="scanning-overlay" id="scanningOverlay">
+    <div class="spinner"></div>
+    <div>Scanning folder...</div>
+    <div id="scanningDetail" style="font-size:11px; color:var(--gray-400);"></div>
+</div>
+
+<script>
+const api = window.electronAPI.migration;
+
+// ── State ──────────────────────────────────────────────────────────────
+
+let currentTab = 'import';
+let scanResult = null;       // { clientFolders }
+let matchResult = null;      // array of match objects
+let allClients = [];         // from TaxOne API
+let currentFilter = 'all';
+let allFiles = [];           // cached file list
+
+// ── Tabs ───────────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${tab}`));
+
+    if (tab === 'queue') refreshFileList();
+    if (tab === 'history') refreshHistory();
+}
+
+// ── Drop Zone ──────────────────────────────────────────────────────────
+
+const dropZone = document.getElementById('dropZone');
+
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('dragover');
+
+    const items = e.dataTransfer.files;
+    if (items.length === 0) return;
+
+    // Use the first dropped item's path
+    const folderPath = items[0].path;
+    await scanAndMatch(folderPath);
+});
+
+async function selectFolder() {
+    const folderPath = await api.selectFolder();
+    if (!folderPath) return;
+    await scanAndMatch(folderPath);
+}
+
+// ── Scan & Match ───────────────────────────────────────────────────────
+
+async function scanAndMatch(folderPath) {
+    const overlay = document.getElementById('scanningOverlay');
+    overlay.classList.add('active');
+
+    try {
+        document.getElementById('scanningDetail').textContent = 'Reading directory tree...';
+        scanResult = await api.scanFolder(folderPath);
+
+        const totalFiles = scanResult.clientFolders.reduce((sum, cf) => sum + cf.files.length, 0);
+        document.getElementById('scanningDetail').textContent =
+            `Found ${scanResult.clientFolders.length} client folders, ${totalFiles.toLocaleString()} files. Matching clients...`;
+
+        matchResult = await api.matchClients(scanResult.clientFolders);
+
+        // Also fetch all clients for the dropdowns
+        allClients = await api.getClients();
+
+        showMatchStep();
+    } catch (err) {
+        alert('Error scanning folder: ' + err.message);
+    } finally {
+        overlay.classList.remove('active');
+    }
+}
+
+function showMatchStep() {
+    document.getElementById('step-drop').style.display = 'none';
+    const stepMatch = document.getElementById('step-match');
+    stepMatch.style.display = 'flex';
+
+    renderMatchTable();
+}
+
+function backToDrop() {
+    document.getElementById('step-drop').style.display = 'block';
+    document.getElementById('step-match').style.display = 'none';
+    scanResult = null;
+    matchResult = null;
+}
+
+function renderMatchTable() {
+    const body = document.getElementById('matchBody');
+    body.innerHTML = '';
+
+    let matchedCount = 0;
+
+    for (let i = 0; i < matchResult.length; i++) {
+        const m = matchResult[i];
+        const folder = scanResult.clientFolders[i];
+        const tr = document.createElement('tr');
+
+        // Folder name
+        const tdFolder = document.createElement('td');
+        tdFolder.textContent = m.folderName;
+        tr.appendChild(tdFolder);
+
+        // Match type badge
+        const tdMatch = document.createElement('td');
+        const className = `match-${m.matchType}`;
+        tdMatch.innerHTML = `<span class="${className}">${m.matchType}</span>`;
+        tr.appendChild(tdMatch);
+
+        // Client selector
+        const tdClient = document.createElement('td');
+        const select = document.createElement('select');
+        select.className = 'client-select';
+        select.dataset.index = i;
+
+        const optNone = document.createElement('option');
+        optNone.value = '';
+        optNone.textContent = '— Skip (no client) —';
+        select.appendChild(optNone);
+
+        for (const c of allClients) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name;
+            if (m.client && m.client.id === c.id) opt.selected = true;
+            select.appendChild(opt);
+        }
+
+        select.onchange = () => {
+            const clientId = select.value;
+            if (clientId) {
+                const client = allClients.find(c => String(c.id) === clientId);
+                matchResult[i].client = client;
+                matchResult[i].matchType = 'manual';
+            } else {
+                matchResult[i].client = null;
+                matchResult[i].matchType = 'unmatched';
+            }
+            updateMatchSummary();
+        };
+
+        tdClient.appendChild(select);
+        tr.appendChild(tdClient);
+
+        // File count
+        const tdFiles = document.createElement('td');
+        tdFiles.textContent = folder.files.length.toLocaleString();
+        tr.appendChild(tdFiles);
+
+        body.appendChild(tr);
+
+        if (m.client) matchedCount++;
+    }
+
+    updateMatchSummary();
+}
+
+function updateMatchSummary() {
+    const matched = matchResult.filter(m => m.client).length;
+    const total = matchResult.length;
+    const totalFiles = scanResult.clientFolders
+        .filter((_, i) => matchResult[i].client)
+        .reduce((sum, cf) => sum + cf.files.length, 0);
+
+    document.getElementById('matchSummary').textContent =
+        `Matched ${matched} of ${total} clients`;
+    document.getElementById('enqueueInfo').textContent =
+        `${totalFiles.toLocaleString()} files will be queued`;
+    document.getElementById('btnEnqueue').disabled = matched === 0;
+}
+
+// ── Enqueue ────────────────────────────────────────────────────────────
+
+async function enqueueMatched() {
+    const mappings = [];
+
+    for (let i = 0; i < matchResult.length; i++) {
+        const m = matchResult[i];
+        if (!m.client) continue;
+
+        const folder = scanResult.clientFolders[i];
+        mappings.push({
+            clientId: m.client.id,
+            clientName: m.client.name,
+            folderName: m.folderName,
+            files: folder.files,
+        });
+    }
+
+    if (mappings.length === 0) return;
+
+    await api.enqueue(mappings);
+    switchTab('queue');
+    refreshFileList();
+    backToDrop(); // reset import step
+}
+
+// ── Queue Tab ──────────────────────────────────────────────────────────
+
+function setFilter(filter) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-pill').forEach(p =>
+        p.classList.toggle('active', p.dataset.filter === filter)
+    );
+    renderFiles();
+}
+
+async function refreshFileList() {
+    allFiles = await api.getFiles();
+    const stats = await api.getStats();
+    updateProgressUI(stats);
+    renderFiles();
+}
+
+function renderFiles() {
+    const container = document.getElementById('fileList');
+    let files = allFiles;
+
+    if (currentFilter !== 'all') {
+        files = files.filter(f => f.status === currentFilter);
+    }
+
+    document.getElementById('filterCount').textContent = `${files.length} files`;
+
+    if (files.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">📋</div>
+                <div>${currentFilter === 'all' ? 'No files in queue' : `No ${currentFilter} files`}</div>
+            </div>
+        `;
+        return;
+    }
+
+    // Render in chunks for performance (30k files)
+    // Show first 500, add "show more" button
+    const CHUNK = 500;
+    const visible = files.slice(0, CHUNK);
+
+    let html = '';
+    for (const f of visible) {
+        html += renderFileRow(f);
+    }
+
+    if (files.length > CHUNK) {
+        html += `<div style="padding:12px 20px; text-align:center;">
+            <button class="btn btn-sm btn-outline" onclick="showAllFiles()">
+                Show all ${files.length.toLocaleString()} files (may be slow)
+            </button>
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+function renderFileRow(f) {
+    const statusClass = `status-${f.status}`;
+    const actions = [];
+    if (f.status === 'failed') {
+        actions.push(`<button class="btn-link" onclick="retryFile('${f.id}')">Retry</button>`);
+    }
+    if (f.status === 'pending' || f.status === 'failed') {
+        actions.push(`<button class="btn-link" onclick="skipFile('${f.id}')">Skip</button>`);
+    }
+
+    let row = `<div class="file-row" id="file-${f.id}">
+        <div class="file-name" title="${escHtml(f.absolutePath)}">${escHtml(f.filename)}</div>
+        <div class="file-client" title="${escHtml(f.clientName)}">${escHtml(f.clientName)}</div>
+        <div class="file-folder" title="${escHtml(f.folderPath || '/')}">${escHtml(f.folderPath || '/')}</div>
+        <div class="file-size">${formatSize(f.size)}</div>
+        <div class="file-status"><span class="status-badge ${statusClass}">${f.status}</span></div>
+        <div class="file-actions">${actions.join('')}</div>
+    </div>`;
+
+    if (f.status === 'failed' && f.error) {
+        row += `<div class="file-error">${escHtml(f.error)}</div>`;
+    }
+
+    return row;
+}
+
+function showAllFiles() {
+    const container = document.getElementById('fileList');
+    let files = allFiles;
+    if (currentFilter !== 'all') files = files.filter(f => f.status === currentFilter);
+
+    let html = '';
+    for (const f of files) html += renderFileRow(f);
+    container.innerHTML = html;
+}
+
+// ── Queue Controls ─────────────────────────────────────────────────────
+
+async function startQueue() {
+    await api.start();
+    document.getElementById('btnStart').style.display = 'none';
+    document.getElementById('btnPause').style.display = '';
+}
+
+async function pauseQueue() {
+    await api.pause();
+    document.getElementById('btnStart').style.display = '';
+    document.getElementById('btnPause').style.display = 'none';
+}
+
+async function retryFile(fileId) {
+    await api.retryFile(fileId);
+}
+
+async function skipFile(fileId) {
+    await api.skipFile(fileId);
+}
+
+async function retryAllFailed() {
+    await api.retryAllFailed();
+}
+
+async function clearQueue() {
+    if (!confirm('Clear all files from the queue? Completed uploads remain in history.')) return;
+    await api.clearQueue();
+    refreshFileList();
+}
+
+// ── Progress Updates (from main process) ───────────────────────────────
+
+function updateProgressUI(stats) {
+    document.getElementById('progressBar').style.width = stats.percent + '%';
+    document.getElementById('statCompleted').textContent = stats.completed.toLocaleString();
+    document.getElementById('statUploading').textContent = stats.uploading;
+    document.getElementById('statPending').textContent = stats.pending.toLocaleString();
+    document.getElementById('statFailed').textContent = stats.failed.toLocaleString();
+    document.getElementById('statPercent').textContent = stats.percent;
+
+    document.getElementById('queueBadge').textContent =
+        (stats.pending + stats.uploading).toLocaleString();
+
+    // Button state
+    const isRunning = stats.queueStatus === 'running';
+    document.getElementById('btnStart').style.display = isRunning ? 'none' : '';
+    document.getElementById('btnPause').style.display = isRunning ? '' : 'none';
+    document.getElementById('btnRetryAll').disabled = stats.failed === 0;
+    document.getElementById('btnClear').disabled = isRunning;
+}
+
+api.onProgress((stats) => {
+    updateProgressUI(stats);
+    // Refresh badge on history tab
+    api.getHistory().then(h => {
+        document.getElementById('historyBadge').textContent = h.length.toLocaleString();
+    });
+});
+
+api.onFileUpdate((file) => {
+    // Update single row in-place if visible
+    const el = document.getElementById(`file-${file.id}`);
+    if (el) {
+        // Re-render just that row (and its error row if any)
+        const temp = document.createElement('div');
+        temp.innerHTML = renderFileRow(file);
+        const newRow = temp.firstElementChild;
+        el.replaceWith(newRow);
+        // If there was an error row after, remove & re-add
+        const nextSib = newRow.nextElementSibling;
+        if (nextSib && nextSib.classList.contains('file-error')) {
+            nextSib.remove();
+        }
+        if (file.status === 'failed' && file.error) {
+            const errorDiv = temp.children[0]; // second child if exists
+            if (errorDiv) newRow.after(errorDiv);
+        }
+    }
+
+    // Update the cached array
+    const idx = allFiles.findIndex(f => f.id === file.id);
+    if (idx !== -1) allFiles[idx] = file;
+});
+
+// ── History Tab ────────────────────────────────────────────────────────
+
+async function refreshHistory() {
+    const history = await api.getHistory();
+    const container = document.getElementById('historyList');
+
+    document.getElementById('historyBadge').textContent = history.length.toLocaleString();
+
+    if (history.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">📜</div>
+                <div>No uploads yet</div>
+            </div>
+        `;
+        return;
+    }
+
+    const visible = history.slice(0, 500);
+    let html = '';
+    for (const h of visible) {
+        const time = new Date(h.uploadedAt).toLocaleString();
+        html += `<div class="history-row">
+            <div class="history-filename">${escHtml(h.filename)}</div>
+            <div class="history-client">${escHtml(h.clientName)}</div>
+            <div class="history-time">${time}</div>
+        </div>`;
+    }
+    if (history.length > 500) {
+        html += `<div style="padding:12px; text-align:center; color:var(--gray-400); font-size:11px;">
+            Showing first 500 of ${history.length.toLocaleString()}
+        </div>`;
+    }
+    container.innerHTML = html;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+function formatSize(bytes) {
+    if (!bytes) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────
+
+async function init() {
+    const stats = await api.getStats();
+    updateProgressUI(stats);
+
+    if (stats.pending > 0 || stats.uploading > 0) {
+        switchTab('queue');
+        refreshFileList();
+    }
+
+    const history = await api.getHistory();
+    document.getElementById('historyBadge').textContent = history.length.toLocaleString();
+}
+
+init();
+</script>
+
+</body>
+</html>
