@@ -17,8 +17,9 @@ const { ipcMain, dialog, BrowserWindow } = require('electron');
  */
 function registerMigrationIPC(queue, getWindow, uploader) {
 
-    ipcMain.handle('migration:scan-folder', async (_event, folderPath) => {
-        return queue.scanFolder(folderPath);
+    ipcMain.handle('migration:scan-folders', async (_event, folderPaths) => {
+        const clientFolders = folderPaths.map(p => queue.scanClientFolder(p));
+        return { clientFolders };
     });
 
     ipcMain.handle('migration:get-clients', async () => {

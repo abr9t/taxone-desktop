@@ -15,7 +15,7 @@
 
 /*
   migration: {
-      scanFolder: (folderPath) => ipcRenderer.invoke('migration:scan-folder', folderPath),
+      scanFolders: (folderPaths) => ipcRenderer.invoke('migration:scan-folders', folderPaths),
       getClients: () => ipcRenderer.invoke('migration:get-clients'),
       matchClients: (scannedFolders) => ipcRenderer.invoke('migration:match-clients', scannedFolders),
       enqueue: (mappings) => ipcRenderer.invoke('migration:enqueue', mappings),
@@ -44,7 +44,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     migration: {
-        scanFolder: (folderPath) => ipcRenderer.invoke('migration:scan-folder', folderPath),
+        scanFolders: (folderPaths) => ipcRenderer.invoke('migration:scan-folders', folderPaths),
         getClients: () => ipcRenderer.invoke('migration:get-clients'),
         matchClients: (scannedFolders) => ipcRenderer.invoke('migration:match-clients', scannedFolders),
         enqueue: (mappings) => ipcRenderer.invoke('migration:enqueue', mappings),

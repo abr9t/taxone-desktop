@@ -120,51 +120,16 @@ class MigrationQueue {
     // ── Scanning & Enqueueing ────────────────────────────────────────────
 
     /**
-     * Scan a dropped folder and return a tree of discovered files grouped by client folder name.
-     * Does NOT enqueue yet — returns the scan result for client matching UI.
+     * Scan a single client folder. The folder's basename = client name.
+     * Walk its contents for files.
      *
-     * Expected structure: rootFolder/ClientName/optional-subfolder/file.pdf
-     *
-     * @param {string} rootPath - path to the dropped root folder
-     * @returns {{ clientFolders: Array<{name, files: Array<{relativePath, absolutePath, size}>}> }}
+     * @param {string} clientFolderPath - path to the client folder
+     * @returns {{ name: string, path: string, files: Array<{relativePath, absolutePath, size}> }}
      */
-    scanFolder(rootPath) {
-        const entries = fs.readdirSync(rootPath, { withFileTypes: true });
-
-        const subDirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
-        const hasRootFiles = entries.some(e => !e.isDirectory() && !e.name.startsWith('.'));
-
-        // Single-client mode: root has files directly, or only 1 subdirectory
-        if (hasRootFiles || subDirs.length <= 1) {
-            const files = this._walkDir(rootPath, rootPath);
-            if (files.length > 0) {
-                return {
-                    clientFolders: [{
-                        name: path.basename(rootPath),
-                        path: rootPath,
-                        files,
-                    }],
-                };
-            }
-            return { clientFolders: [] };
-        }
-
-        // Multi-client mode: 2+ subdirectories, no loose files at root
-        const clientFolders = [];
-        for (const entry of subDirs) {
-            const clientDir = path.join(rootPath, entry.name);
-            const files = this._walkDir(clientDir, clientDir);
-
-            if (files.length > 0) {
-                clientFolders.push({
-                    name: entry.name,
-                    path: clientDir,
-                    files,
-                });
-            }
-        }
-
-        return { clientFolders };
+    scanClientFolder(clientFolderPath) {
+        const name = path.basename(clientFolderPath);
+        const files = this._walkDir(clientFolderPath, clientFolderPath);
+        return { name, path: clientFolderPath, files };
     }
 
     /**

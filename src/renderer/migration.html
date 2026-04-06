@@ -346,8 +346,8 @@
         <div id="step-drop">
             <div class="drop-zone" id="dropZone">
                 <div class="icon">📁</div>
-                <h3>Drop your Canopy export folder here</h3>
-                <p>Expected structure: <strong>ClientName / SubFolder / file.pdf</strong></p>
+                <h3>Drop one or more client folders here</h3>
+                <p>Each folder = one client. Subfolders become the file path in TaxOne.</p>
                 <div class="or">— or —</div>
                 <button class="btn btn-outline" onclick="selectFolder()">Browse for Folder</button>
             </div>
@@ -364,6 +364,7 @@
                 <table class="match-table">
                     <thead>
                         <tr>
+                            <th style="width:32px;"></th>
                             <th>Folder Name</th>
                             <th>Match</th>
                             <th>TaxOne Client</th>
@@ -377,6 +378,8 @@
                 <button class="btn btn-amber" id="btnEnqueue" onclick="enqueueMatched()">
                     Add Matched Files to Queue
                 </button>
+                <button class="btn btn-sm btn-outline" onclick="checkAll()">Check All</button>
+                <button class="btn btn-sm btn-outline" onclick="uncheckUnmatched()">Uncheck Unmatched</button>
                 <span id="enqueueInfo" style="font-size:12px; color:var(--gray-500); align-self:center;"></span>
             </div>
         </div>
@@ -458,6 +461,7 @@ let matchResult = null;      // array of match objects
 let allClients = [];         // from TaxOne API
 let currentFilter = 'all';
 let allFiles = [];           // cached file list
+let rowChecked = [];         // checkbox state per match row
 
 // ── Tabs ───────────────────────────────────────────────────────────────
 
@@ -486,33 +490,36 @@ dropZone.addEventListener('drop', async (e) => {
     dropZone.classList.remove('dragover');
 
     const items = e.dataTransfer.files;
-    if (items.length === 0) return;
-
-    let folderPath;
-    try {
-        folderPath = api.getPathForFile(items[0]);
-    } catch {
-        folderPath = await api.selectFolder();
+    const paths = [];
+    for (const file of items) {
+        try {
+            const p = api.getPathForFile(file);
+            if (p) paths.push(p);
+        } catch { /* ignore */ }
     }
-    if (!folderPath) return;
-    await scanAndMatch(folderPath);
+    if (paths.length === 0) {
+        const p = await api.selectFolder();
+        if (p) paths.push(p);
+    }
+    if (paths.length === 0) return;
+    await scanAndMatch(paths);
 });
 
 async function selectFolder() {
     const folderPath = await api.selectFolder();
     if (!folderPath) return;
-    await scanAndMatch(folderPath);
+    await scanAndMatch([folderPath]);
 }
 
 // ── Scan & Match ───────────────────────────────────────────────────────
 
-async function scanAndMatch(folderPath) {
+async function scanAndMatch(folderPaths) {
     const overlay = document.getElementById('scanningOverlay');
     overlay.classList.add('active');
 
     try {
         document.getElementById('scanningDetail').textContent = 'Reading directory tree...';
-        scanResult = await api.scanFolder(folderPath);
+        scanResult = await api.scanFolders(folderPaths);
 
         const totalFiles = scanResult.clientFolders.reduce((sum, cf) => sum + cf.files.length, 0);
         document.getElementById('scanningDetail').textContent =
@@ -550,12 +557,26 @@ function renderMatchTable() {
     const body = document.getElementById('matchBody');
     body.innerHTML = '';
 
-    let matchedCount = 0;
+    // Initialize checkbox state: checked by default, unchecked for unmatched
+    rowChecked = matchResult.map(m => m.matchType !== 'unmatched');
 
     for (let i = 0; i < matchResult.length; i++) {
         const m = matchResult[i];
         const folder = scanResult.clientFolders[i];
         const tr = document.createElement('tr');
+
+        // Checkbox
+        const tdCheck = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = rowChecked[i];
+        cb.dataset.index = i;
+        cb.onchange = () => {
+            rowChecked[i] = cb.checked;
+            updateMatchSummary();
+        };
+        tdCheck.appendChild(cb);
+        tr.appendChild(tdCheck);
 
         // Folder name
         const tdFolder = document.createElement('td');
@@ -609,25 +630,51 @@ function renderMatchTable() {
         tr.appendChild(tdFiles);
 
         body.appendChild(tr);
-
-        if (m.client) matchedCount++;
     }
 
+    updateMatchSummary();
+}
+
+function checkAll() {
+    rowChecked = rowChecked.map(() => true);
+    document.querySelectorAll('#matchBody input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+    updateMatchSummary();
+}
+
+function uncheckUnmatched() {
+    for (let i = 0; i < matchResult.length; i++) {
+        if (!matchResult[i].client) {
+            rowChecked[i] = false;
+            const cb = document.querySelector(`#matchBody input[data-index="${i}"]`);
+            if (cb) cb.checked = false;
+        }
+    }
     updateMatchSummary();
 }
 
 function updateMatchSummary() {
     const matched = matchResult.filter(m => m.client).length;
     const total = matchResult.length;
-    const totalFiles = scanResult.clientFolders
-        .filter((_, i) => matchResult[i].client)
-        .reduce((sum, cf) => sum + cf.files.length, 0);
+
+    // Only count checked rows with a client assigned
+    let queuedFiles = 0;
+    let queuedClients = 0;
+    let skippedFiles = 0;
+    for (let i = 0; i < matchResult.length; i++) {
+        const fileCount = scanResult.clientFolders[i].files.length;
+        if (rowChecked[i] && matchResult[i].client) {
+            queuedFiles += fileCount;
+            queuedClients++;
+        } else {
+            skippedFiles += fileCount;
+        }
+    }
 
     document.getElementById('matchSummary').textContent =
         `Matched ${matched} of ${total} clients`;
     document.getElementById('enqueueInfo').textContent =
-        `${totalFiles.toLocaleString()} files will be queued`;
-    document.getElementById('btnEnqueue').disabled = matched === 0;
+        `${queuedFiles.toLocaleString()} files from ${queuedClients} clients will be queued (${skippedFiles.toLocaleString()} skipped)`;
+    document.getElementById('btnEnqueue').disabled = queuedClients === 0;
 }
 
 // ── Enqueue ────────────────────────────────────────────────────────────
@@ -637,7 +684,7 @@ async function enqueueMatched() {
 
     for (let i = 0; i < matchResult.length; i++) {
         const m = matchResult[i];
-        if (!m.client) continue;
+        if (!rowChecked[i] || !m.client) continue;
 
         const folder = scanResult.clientFolders[i];
         mappings.push({
@@ -798,6 +845,7 @@ function updateProgressUI(stats) {
     // Button state
     const isRunning = stats.queueStatus === 'running';
     document.getElementById('btnStart').style.display = isRunning ? 'none' : '';
+    document.getElementById('btnStart').disabled = (stats.pending === 0);
     document.getElementById('btnPause').style.display = isRunning ? '' : 'none';
     document.getElementById('btnRetryAll').disabled = stats.failed === 0;
     document.getElementById('btnClear').disabled = isRunning;
