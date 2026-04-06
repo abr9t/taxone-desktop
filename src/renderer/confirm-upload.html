@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TaxOne — Upload File</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1e293b; color: #e2e8f0;
+            padding: 20px 24px;
+            user-select: none;
+            display: flex; flex-direction: column;
+            height: 100vh;
+        }
+        .header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+        h2 { font-size: 16px; font-weight: 600; }
+        .queue-badge {
+            background: #e8a020; color: #1e293b;
+            border-radius: 12px; padding: 1px 8px;
+            font-size: 11px; font-weight: 600;
+            display: none;
+        }
+        label {
+            display: block; font-size: 11px; font-weight: 600;
+            color: #94a3b8; margin-bottom: 5px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .field { margin-bottom: 12px; }
+        input[type="text"] {
+            width: 100%; padding: 8px 10px;
+            border: 1px solid #334155; border-radius: 7px;
+            background: #0f172a; color: #e2e8f0;
+            font-size: 13px; outline: none;
+        }
+        input:focus { border-color: #e8a020; }
+
+        /* Client search */
+        .client-wrap { position: relative; }
+        .client-results {
+            position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+            background: #0f172a; border: 1px solid #334155;
+            border-radius: 7px; max-height: 150px; overflow-y: auto;
+            display: none; margin-top: 2px;
+        }
+        .client-item {
+            padding: 7px 10px; cursor: pointer;
+            font-size: 13px; border-bottom: 1px solid #1e293b;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .client-item:hover { background: #334155; }
+        .client-item:last-child { border-bottom: none; }
+        .client-status {
+            font-size: 9px; padding: 1px 5px; border-radius: 4px;
+            background: #14532d; color: #86efac;
+        }
+        .selected-client {
+            display: flex; align-items: center;
+            background: #14532d; border-radius: 7px;
+            padding: 7px 10px; font-size: 13px; color: #86efac;
+        }
+        .selected-client .clear {
+            margin-left: auto; cursor: pointer;
+            color: #64748b; font-size: 16px; line-height: 1;
+        }
+        .selected-client .clear:hover { color: #e2e8f0; }
+
+        /* Folder browser */
+        .folder-browser {
+            flex: 1; min-height: 0;
+            background: #0f172a; border: 1px solid #334155;
+            border-radius: 8px; display: flex; flex-direction: column;
+            overflow: hidden;
+        }
+        .folder-bar {
+            display: flex; align-items: center; gap: 6px;
+            padding: 8px 10px; border-bottom: 1px solid #334155;
+            background: #0f172a; min-height: 36px;
+        }
+        .folder-bar-btn {
+            background: none; border: none; color: #94a3b8;
+            cursor: pointer; padding: 2px 4px; font-size: 14px;
+            border-radius: 4px; display: flex; align-items: center;
+        }
+        .folder-bar-btn:hover { background: #334155; color: #e2e8f0; }
+        .folder-bar-btn:disabled { opacity: 0.3; cursor: default; }
+        .folder-bar-btn:disabled:hover { background: none; color: #94a3b8; }
+        .folder-path {
+            font-size: 12px; font-weight: 600; color: #e2e8f0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            flex: 1;
+        }
+        .folder-path span { color: #94a3b8; }
+        .new-folder-btn {
+            background: none; border: 1px solid #334155; color: #94a3b8;
+            cursor: pointer; padding: 2px 8px; font-size: 11px;
+            border-radius: 4px; white-space: nowrap;
+        }
+        .new-folder-btn:hover { border-color: #e8a020; color: #e8a020; }
+        .folder-list {
+            flex: 1; overflow-y: auto; padding: 4px 0;
+        }
+        .folder-row {
+            display: flex; align-items: center; gap: 8px;
+            padding: 7px 12px; cursor: pointer; font-size: 13px;
+            border-bottom: 1px solid #1e293b;
+        }
+        .folder-row:hover { background: #1e293b; }
+        .folder-row:last-child { border-bottom: none; }
+        .folder-icon { color: #e8a020; font-size: 14px; flex-shrink: 0; }
+        .folder-name { flex: 1; }
+        .folder-arrow { color: #475569; font-size: 12px; }
+        .folder-empty {
+            padding: 20px; text-align: center;
+            color: #64748b; font-size: 12px;
+        }
+        .folder-loading {
+            padding: 20px; text-align: center;
+            color: #64748b; font-size: 12px;
+        }
+        .new-folder-row {
+            display: none; align-items: center; gap: 6px;
+            padding: 5px 10px; border-bottom: 1px solid #334155;
+        }
+        .new-folder-row input {
+            flex: 1; padding: 5px 8px; font-size: 12px;
+        }
+        .new-folder-row button {
+            background: #e8a020; color: #1e293b; border: none;
+            border-radius: 5px; padding: 5px 10px; font-size: 11px;
+            font-weight: 600; cursor: pointer;
+        }
+        .new-folder-row .cancel-btn {
+            background: none; color: #94a3b8; padding: 5px 6px;
+        }
+
+        /* Bottom bar */
+        .bottom-bar {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-top: 12px; gap: 8px;
+        }
+        .upload-dest {
+            font-size: 11px; color: #94a3b8;
+            flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .upload-dest strong { color: #e2e8f0; }
+        .btn {
+            padding: 9px 18px; border: none; border-radius: 7px;
+            font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+        }
+        .btn-primary { background: #e8a020; color: #1e293b; }
+        .btn-primary:hover { background: #d4911c; }
+        .btn-primary:disabled { opacity: 0.4; cursor: default; }
+        .btn-ghost { background: none; color: #94a3b8; padding: 9px 10px; }
+        .btn-ghost:hover { color: #e2e8f0; }
+
+        /* States */
+        .uploading-overlay {
+            display: none; position: absolute; inset: 0;
+            background: rgba(15,23,42,0.92);
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 20;
+        }
+        .spinner {
+            width: 32px; height: 32px; border: 3px solid #334155;
+            border-top-color: #e8a020; border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin-bottom: 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .success-overlay {
+            display: none; position: absolute; inset: 0;
+            background: rgba(15,23,42,0.92);
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 20;
+        }
+        .success-icon {
+            width: 48px; height: 48px; border-radius: 50%;
+            background: #14532d; color: #86efac;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px; margin-bottom: 10px;
+        }
+        .success-file { font-size: 13px; font-weight: 500; margin-top: 6px; }
+        .success-dest { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+        .error-msg {
+            color: #fca5a5; font-size: 11px; margin-top: 4px; display: none;
+            padding: 0 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>Upload File</h2>
+        <span class="queue-badge" id="queueBadge"></span>
+    </div>
+
+    <!-- Filename -->
+    <div class="field">
+        <label>File Name</label>
+        <input type="text" id="fileNameInput" placeholder="filename">
+    </div>
+
+    <!-- Client -->
+    <div class="field">
+        <label>Client</label>
+        <div class="client-wrap">
+            <input type="text" id="clientSearch" placeholder="Search clients..." autocomplete="off">
+            <div class="client-results" id="clientResults"></div>
+        </div>
+        <div class="selected-client" id="selectedClient" style="display:none">
+            <span id="selectedName"></span>
+            <span class="clear" id="clearClient">×</span>
+        </div>
+    </div>
+
+    <!-- Folder browser -->
+    <div class="folder-browser" id="folderBrowser" style="display:none">
+        <div class="folder-bar">
+            <button class="folder-bar-btn" id="backBtn" disabled title="Go back">←</button>
+            <div class="folder-path" id="folderPath"><span>Select a folder</span></div>
+            <button class="new-folder-btn" id="newFolderBtn">+ New</button>
+        </div>
+        <div class="new-folder-row" id="newFolderRow">
+            <input type="text" id="newFolderName" placeholder="Folder name">
+            <button id="createFolderBtn">Create</button>
+            <button class="cancel-btn" id="cancelNewFolder">✕</button>
+        </div>
+        <div class="folder-list" id="folderList">
+            <div class="folder-loading">Loading...</div>
+        </div>
+    </div>
+
+    <div class="error-msg" id="error"></div>
+
+    <!-- Bottom bar -->
+    <div class="bottom-bar">
+        <div class="upload-dest" id="uploadDest"></div>
+        <button class="btn btn-ghost" id="skipBtn">Skip</button>
+        <button class="btn btn-primary" id="uploadBtn" disabled>Upload</button>
+    </div>
+
+    <!-- Overlays -->
+    <div class="uploading-overlay" id="uploadingOverlay">
+        <div class="spinner"></div>
+        <div style="font-size:13px">Uploading...</div>
+    </div>
+
+    <div class="success-overlay" id="successOverlay">
+        <div class="success-icon">✓</div>
+        <div style="font-size:15px; font-weight:600;">Uploaded!</div>
+        <div class="success-file" id="successFile"></div>
+        <div class="success-dest" id="successDest"></div>
+        <div style="margin-top:16px">
+            <button class="btn btn-primary" id="nextBtn">Next File</button>
+        </div>
+    </div>
+
+    <script>
+        // ── State ───────────────────────────────────────
+        let selectedClientId = null;
+        let selectedClientName = '';
+        let currentFile = null;
+        let currentParentId = null;  // null = root
+        let folderStack = [];        // breadcrumb stack [{id, name}]
+        let searchTimeout = null;
+
+        const $ = (id) => document.getElementById(id);
+
+        // ── Queue events ────────────────────────────────
+        window.taxone.onQueueUpdated((data) => {
+            updateBadge(data.total);
+            if (data.current) showFile(data.current);
+        });
+
+        function updateBadge(count) {
+            $('queueBadge').textContent = `${count} files`;
+            $('queueBadge').style.display = count > 1 ? 'inline' : 'none';
+        }
+
+        // ── Show file ───────────────────────────────────
+        function showFile(data) {
+            currentFile = data;
+
+            // Editable filename (strip extension for editing, keep extension)
+            const ext = data.fileName.includes('.') ? data.fileName.substring(data.fileName.lastIndexOf('.')) : '';
+            const stem = data.fileName.includes('.') ? data.fileName.substring(0, data.fileName.lastIndexOf('.')) : data.fileName;
+            $('fileNameInput').value = stem;
+            $('fileNameInput').dataset.ext = ext;
+
+            // Reset client
+            selectedClientId = null;
+            selectedClientName = '';
+            $('selectedClient').style.display = 'none';
+            $('clientSearch').style.display = 'block';
+            $('clientSearch').value = '';
+
+            // Reset folder browser
+            currentParentId = null;
+            folderStack = [];
+            $('folderBrowser').style.display = 'none';
+
+            // Hide overlays
+            $('uploadingOverlay').style.display = 'none';
+            $('successOverlay').style.display = 'none';
+            $('error').style.display = 'none';
+
+            // Pre-fill client from folder hint
+            if (data.clientHint) {
+                $('clientSearch').value = data.clientHint;
+                searchClients(data.clientHint);
+            }
+
+            updateUploadBtn();
+            updateDestLabel();
+
+            // Focus filename and select it
+            $('fileNameInput').focus();
+            $('fileNameInput').select();
+        }
+
+        function getFullFilename() {
+            const stem = $('fileNameInput').value.trim();
+            const ext = $('fileNameInput').dataset.ext || '';
+            return stem ? stem + ext : currentFile.fileName;
+        }
+
+        function updateUploadBtn() {
+            $('uploadBtn').disabled = !selectedClientId;
+        }
+
+        function updateDestLabel() {
+            if (!selectedClientId) {
+                $('uploadDest').innerHTML = '';
+                return;
+            }
+            const pathStr = folderStack.length > 0
+                ? folderStack.map(f => f.name).join(' / ')
+                : 'Root';
+            $('uploadDest').innerHTML = `Upload to: <strong>${esc(selectedClientName)}</strong> → ${esc(pathStr)}`;
+        }
+
+        // ── Client search ───────────────────────────────
+        $('clientSearch').addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => searchClients($('clientSearch').value), 250);
+        });
+        $('clientSearch').addEventListener('focus', () => {
+            if ($('clientSearch').value.length > 0) searchClients($('clientSearch').value);
+        });
+
+        async function searchClients(query) {
+            if (!query) { $('clientResults').style.display = 'none'; return; }
+
+            const data = await window.taxone.searchClients(query);
+            const clients = data.clients || [];
+
+            if (clients.length === 0) {
+                $('clientResults').innerHTML = '<div class="client-item" style="color:#64748b;cursor:default">No clients found</div>';
+            } else {
+                $('clientResults').innerHTML = clients.map(c => `
+                    <div class="client-item" data-id="${c.id}" data-name="${esc(c.name)}">
+                        <span>${esc(c.name)}</span>
+                        <span class="client-status">${c.status}</span>
+                    </div>
+                `).join('');
+            }
+            $('clientResults').style.display = 'block';
+
+            // Auto-select exact match
+            const exact = clients.find(c => c.name.toLowerCase() === query.toLowerCase());
+            if (exact) selectClient(exact.id, exact.name);
+        }
+
+        $('clientResults').addEventListener('click', (e) => {
+            const item = e.target.closest('.client-item');
+            if (!item || !item.dataset.id) return;
+            selectClient(parseInt(item.dataset.id), item.dataset.name);
+        });
+
+        async function selectClient(id, name) {
+            selectedClientId = id;
+            selectedClientName = name;
+            $('selectedName').textContent = name;
+            $('selectedClient').style.display = 'flex';
+            $('clientSearch').style.display = 'none';
+            $('clientResults').style.display = 'none';
+
+            // Show folder browser and load root folders
+            $('folderBrowser').style.display = 'flex';
+            currentParentId = null;
+            folderStack = [];
+            await loadFolders();
+            updateUploadBtn();
+            updateDestLabel();
+        }
+
+        $('clearClient').addEventListener('click', () => {
+            selectedClientId = null;
+            selectedClientName = '';
+            $('selectedClient').style.display = 'none';
+            $('clientSearch').style.display = 'block';
+            $('clientSearch').value = '';
+            $('clientSearch').focus();
+            $('folderBrowser').style.display = 'none';
+            currentParentId = null;
+            folderStack = [];
+            updateUploadBtn();
+            updateDestLabel();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#clientSearch') && !e.target.closest('#clientResults')) {
+                $('clientResults').style.display = 'none';
+            }
+        });
+
+        // ── Folder browser ──────────────────────────────
+        async function loadFolders() {
+            $('folderList').innerHTML = '<div class="folder-loading">Loading...</div>';
+            updateFolderBar();
+
+            const data = await window.taxone.fetchFolders(selectedClientId, currentParentId);
+            const folders = data.folders || [];
+
+            if (folders.length === 0) {
+                $('folderList').innerHTML = '<div class="folder-empty">No folders — upload here or create one</div>';
+            } else {
+                $('folderList').innerHTML = folders.map(f => `
+                    <div class="folder-row" data-id="${f.id}" data-name="${esc(f.name)}">
+                        <span class="folder-icon">📁</span>
+                        <span class="folder-name">${esc(f.name)}</span>
+                        <span class="folder-arrow">›</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        $('folderList').addEventListener('click', async (e) => {
+            const row = e.target.closest('.folder-row');
+            if (!row) return;
+            const id = parseInt(row.dataset.id);
+            const name = row.dataset.name;
+
+            // Navigate into folder
+            folderStack.push({ id, name });
+            currentParentId = id;
+            await loadFolders();
+            updateDestLabel();
+        });
+
+        // Back button
+        $('backBtn').addEventListener('click', async () => {
+            if (folderStack.length === 0) return;
+            folderStack.pop();
+            currentParentId = folderStack.length > 0 ? folderStack[folderStack.length - 1].id : null;
+            await loadFolders();
+            updateDestLabel();
+        });
+
+        function updateFolderBar() {
+            $('backBtn').disabled = folderStack.length === 0;
+            if (folderStack.length === 0) {
+                $('folderPath').innerHTML = esc(selectedClientName);
+            } else {
+                const parts = folderStack.map(f => f.name);
+                $('folderPath').innerHTML = esc(parts.join(' / '));
+            }
+        }
+
+        // ── New folder ──────────────────────────────────
+        $('newFolderBtn').addEventListener('click', () => {
+            $('newFolderRow').style.display = 'flex';
+            $('newFolderName').value = '';
+            $('newFolderName').focus();
+        });
+
+        $('cancelNewFolder').addEventListener('click', () => {
+            $('newFolderRow').style.display = 'none';
+        });
+
+        $('newFolderName').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') $('createFolderBtn').click();
+            if (e.key === 'Escape') $('cancelNewFolder').click();
+        });
+
+        $('createFolderBtn').addEventListener('click', async () => {
+            const name = $('newFolderName').value.trim();
+            if (!name) return;
+
+            $('createFolderBtn').disabled = true;
+            $('createFolderBtn').textContent = '...';
+
+            // Build the full path for folder creation
+            const pathParts = folderStack.map(f => f.name);
+            pathParts.push(name);
+            const fullPath = pathParts.join('/');
+
+            // Create via upload endpoint's folder creation (reuse the folder path logic)
+            // Or call a dedicated create endpoint — for now, just navigate into it
+            // The upload endpoint creates folders automatically, so we just add to stack
+            folderStack.push({ id: 'new:' + name, name });
+            currentParentId = 'new:' + name;
+
+            $('newFolderRow').style.display = 'none';
+            $('createFolderBtn').disabled = false;
+            $('createFolderBtn').textContent = 'Create';
+
+            // Show the new folder as current location (upload will create it)
+            $('folderList').innerHTML = '<div class="folder-empty">New folder — will be created on upload</div>';
+            updateFolderBar();
+            updateDestLabel();
+        });
+
+        // ── Upload ──────────────────────────────────────
+        $('uploadBtn').addEventListener('click', async () => {
+            if (!selectedClientId || !currentFile) return;
+
+            $('error').style.display = 'none';
+            $('uploadingOverlay').style.display = 'flex';
+
+            // Build folder path from stack
+            const folderPath = folderStack.length > 0
+                ? folderStack.map(f => f.name).join('/')
+                : null;
+
+            const result = await window.taxone.uploadFile({
+                filePath: currentFile.filePath,
+                clientId: selectedClientId,
+                folderPath,
+                filename: getFullFilename(),
+            });
+
+            if (result.success) {
+                $('uploadingOverlay').style.display = 'none';
+                $('successFile').textContent = getFullFilename();
+                $('successDest').textContent = `→ ${selectedClientName}${folderPath ? ' / ' + folderPath : ''}`;
+                $('successOverlay').style.display = 'flex';
+            } else {
+                $('uploadingOverlay').style.display = 'none';
+                $('error').textContent = result.error;
+                $('error').style.display = 'block';
+            }
+        });
+
+        // ── Next / Skip ─────────────────────────────────
+        $('nextBtn').addEventListener('click', () => window.taxone.queueNext());
+        $('skipBtn').addEventListener('click', () => window.taxone.queueNext());
+
+        // ── Helpers ─────────────────────────────────────
+        function esc(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+    </script>
+</body>
+</html>

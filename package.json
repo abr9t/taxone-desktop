@@ -1,0 +1,26 @@
+{
+  "name": "taxone-desktop",
+  "version": "1.0.0",
+  "description": "TaxOne Desktop Companion — watch folder file uploader",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
+  },
+  "author": "TaxOne LLC",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "chokidar": "^4.0.0",
+    "electron-store": "^8.2.0",
+    "keytar": "^7.9.0"
+  }
+}

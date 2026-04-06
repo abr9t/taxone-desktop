@@ -1,0 +1,17 @@
+appId: com.taxone.desktop
+productName: TaxOne Desktop
+directories:
+  output: dist
+win:
+  target:
+    - nsis
+  icon: assets/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json

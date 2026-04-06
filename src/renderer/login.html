@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TaxOne Desktop — Sign In</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1e293b;
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            padding: 32px;
+            -webkit-app-region: drag;
+            user-select: none;
+        }
+        .logo {
+            width: 56px; height: 56px;
+            background: #e8a020;
+            border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; font-weight: 700; color: #1e293b;
+            margin-bottom: 12px;
+        }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+        .subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 28px; }
+        form {
+            width: 100%;
+            -webkit-app-region: no-drag;
+        }
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #94a3b8;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 14px;
+            margin-bottom: 16px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        input:focus { border-color: #e8a020; }
+        input::placeholder { color: #475569; }
+        .hint {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: -12px;
+            margin-bottom: 16px;
+        }
+        button {
+            width: 100%;
+            padding: 11px;
+            border: none;
+            border-radius: 8px;
+            background: #e8a020;
+            color: #1e293b;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        button:hover { background: #d4911c; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        .error {
+            background: #7f1d1d;
+            color: #fca5a5;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 16px;
+            display: none;
+        }
+        .help {
+            margin-top: 20px;
+            font-size: 11px;
+            color: #64748b;
+            text-align: center;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="logo">T</div>
+    <h1>TaxOne Desktop</h1>
+    <p class="subtitle">Connect to your TaxOne account</p>
+
+    <form id="loginForm">
+        <label for="serverUrl">Server URL</label>
+        <input type="url" id="serverUrl" placeholder="https://taxone.cpa" required>
+        <p class="hint">Your firm's TaxOne URL</p>
+
+        <label for="token">API Token</label>
+        <input type="password" id="token" placeholder="Paste your token here" required>
+        <p class="hint">Generate a token in Firm Settings → Integrations → Desktop App</p>
+
+        <div class="error" id="error"></div>
+
+        <button type="submit" id="submitBtn">Connect</button>
+    </form>
+
+    <p class="help">
+        Need help? Open TaxOne in your browser and go to<br>
+        Firm Settings → Integrations → Desktop App
+    </p>
+
+    <script>
+        const form = document.getElementById('loginForm');
+        const errorEl = document.getElementById('error');
+        const submitBtn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorEl.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Connecting...';
+
+            const serverUrl = document.getElementById('serverUrl').value.trim();
+            const token = document.getElementById('token').value.trim();
+
+            const result = await window.taxone.login({ serverUrl, token });
+
+            if (result.success) {
+                // Window closes automatically on success (main.js handles it)
+            } else {
+                errorEl.textContent = result.error;
+                errorEl.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Connect';
+            }
+        });
+    </script>
+</body>
+</html>

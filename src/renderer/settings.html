@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TaxOne Desktop — Settings</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1e293b; color: #e2e8f0;
+            padding: 28px 32px;
+            -webkit-app-region: drag;
+            user-select: none;
+        }
+        h1 { font-size: 18px; font-weight: 600; margin-bottom: 24px; }
+        .section { margin-bottom: 24px; }
+        .section-title {
+            font-size: 11px; font-weight: 600; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            margin-bottom: 10px; padding-bottom: 6px;
+            border-bottom: 1px solid #334155;
+        }
+        label { display: block; font-size: 13px; color: #cbd5e1; margin-bottom: 6px; }
+        .field { margin-bottom: 14px; -webkit-app-region: no-drag; }
+        .row { display: flex; gap: 8px; align-items: center; }
+        input[type="text"] {
+            flex: 1; padding: 9px 12px;
+            border: 1px solid #334155; border-radius: 8px;
+            background: #0f172a; color: #e2e8f0;
+            font-size: 13px; outline: none;
+        }
+        input[type="text"]:focus { border-color: #e8a020; }
+        .btn {
+            padding: 9px 16px; border: none; border-radius: 8px;
+            font-size: 13px; font-weight: 500; cursor: pointer;
+            transition: background 0.15s;
+            -webkit-app-region: no-drag;
+        }
+        .btn-primary { background: #e8a020; color: #1e293b; }
+        .btn-primary:hover { background: #d4911c; }
+        .btn-secondary { background: #334155; color: #e2e8f0; }
+        .btn-secondary:hover { background: #475569; }
+        .btn:disabled { opacity: 0.5; cursor: default; }
+        .checkbox-row {
+            display: flex; align-items: center; gap: 8px;
+            -webkit-app-region: no-drag;
+        }
+        .checkbox-row input[type="checkbox"] {
+            width: 16px; height: 16px; accent-color: #e8a020;
+        }
+        .checkbox-row label { margin-bottom: 0; }
+        .info {
+            font-size: 11px; color: #64748b; margin-top: 4px;
+        }
+        .status {
+            display: flex; align-items: center; gap: 8px;
+            padding: 10px 14px; border-radius: 8px;
+            background: #0f172a; font-size: 13px;
+        }
+        .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+        }
+        .dot-green { background: #22c55e; }
+        .dot-gray { background: #64748b; }
+        .folder-structure {
+            background: #0f172a; border-radius: 8px;
+            padding: 12px 14px; margin-top: 10px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 11px; color: #94a3b8; line-height: 1.6;
+            white-space: pre;
+        }
+        .actions {
+            display: flex; gap: 8px; justify-content: flex-end;
+            margin-top: 24px;
+            -webkit-app-region: no-drag;
+        }
+        .saved {
+            color: #22c55e; font-size: 13px; font-weight: 500;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Settings</h1>
+
+    <div class="section">
+        <div class="section-title">Connection</div>
+        <div class="status" id="status">
+            <span class="dot dot-gray" id="statusDot"></span>
+            <span id="statusText">Checking...</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Watch Folder</div>
+        <div class="field">
+            <label for="watchPath">Folder to watch for new files</label>
+            <div class="row">
+                <input type="text" id="watchPath" readonly>
+                <button class="btn btn-secondary" id="browseBtn">Browse</button>
+            </div>
+        </div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="moveAfterUpload" checked>
+            <label for="moveAfterUpload">Move files to "Uploaded" subfolder after upload</label>
+        </div>
+        <p class="info">Files stay on your computer — they're just moved to avoid re-uploading.</p>
+
+        <div class="folder-structure">TaxoneWatch/
+├── SMITH, JOHN/          ← client name (auto-matched)
+│   ├── 2024/             ← creates folder in TaxOne
+│   │   └── 1040.pdf      ← uploaded file
+│   └── W2.pdf            ← uploaded to root
+└── receipt.pdf           ← you pick the client</div>
+    </div>
+
+    <div class="actions">
+        <span class="saved" id="saved">✓ Saved</span>
+        <button class="btn btn-primary" id="saveBtn">Save</button>
+    </div>
+
+    <script>
+        const watchPathInput = document.getElementById('watchPath');
+        const browseBtn = document.getElementById('browseBtn');
+        const moveCheckbox = document.getElementById('moveAfterUpload');
+        const saveBtn = document.getElementById('saveBtn');
+        const savedLabel = document.getElementById('saved');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        // Load current settings
+        (async () => {
+            const settings = await window.taxone.getSettings();
+            watchPathInput.value = settings.watchPath || '';
+            moveCheckbox.checked = settings.moveAfterUpload;
+
+            if (settings.hasToken) {
+                statusDot.className = 'dot dot-green';
+                statusText.textContent = `Connected to ${settings.serverUrl || 'TaxOne'}`;
+            } else {
+                statusDot.className = 'dot dot-gray';
+                statusText.textContent = 'Not connected';
+            }
+        })();
+
+        browseBtn.addEventListener('click', async () => {
+            const folder = await window.taxone.browseFolder();
+            if (folder) watchPathInput.value = folder;
+        });
+
+        saveBtn.addEventListener('click', async () => {
+            saveBtn.disabled = true;
+            const result = await window.taxone.saveSettings({
+                watchPath: watchPathInput.value,
+                moveAfterUpload: moveCheckbox.checked,
+            });
+
+            if (result.success) {
+                savedLabel.style.display = 'inline';
+                setTimeout(() => { savedLabel.style.display = 'none'; }, 2000);
+            }
+            saveBtn.disabled = false;
+        });
+    </script>
+</body>
+</html>
