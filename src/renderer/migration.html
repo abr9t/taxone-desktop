@@ -488,10 +488,10 @@ dropZone.addEventListener('drop', async (e) => {
     const items = e.dataTransfer.files;
     if (items.length === 0) return;
 
-    // Electron only exposes .path on File objects when nodeIntegration is enabled;
-    // with contextIsolation the property is undefined, so fall back to the folder picker.
-    let folderPath = items[0].path;
-    if (!folderPath) {
+    let folderPath;
+    try {
+        folderPath = api.getPathForFile(items[0]);
+    } catch {
         folderPath = await api.selectFolder();
     }
     if (!folderPath) return;
@@ -652,7 +652,7 @@ async function enqueueMatched() {
 
     await api.enqueue(mappings);
     switchTab('queue');
-    refreshFileList();
+    await refreshFileList();
     backToDrop(); // reset import step
 }
 

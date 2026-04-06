@@ -113,7 +113,7 @@ class MigrationQueue {
             uploading,
             skipped,
             queueStatus: this._status,
-            percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+            percent: total > 0 ? Math.round(((completed + skipped) / total) * 100) : 0,
         };
     }
 
@@ -129,13 +129,29 @@ class MigrationQueue {
      * @returns {{ clientFolders: Array<{name, files: Array<{relativePath, absolutePath, size}>}> }}
      */
     scanFolder(rootPath) {
-        const clientFolders = [];
         const entries = fs.readdirSync(rootPath, { withFileTypes: true });
 
-        for (const entry of entries) {
-            if (!entry.isDirectory()) continue; // skip loose files at root
-            if (entry.name.startsWith('.')) continue; // skip hidden
+        const subDirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+        const hasRootFiles = entries.some(e => !e.isDirectory() && !e.name.startsWith('.'));
 
+        // Single-client mode: root has files directly, or only 1 subdirectory
+        if (hasRootFiles || subDirs.length <= 1) {
+            const files = this._walkDir(rootPath, rootPath);
+            if (files.length > 0) {
+                return {
+                    clientFolders: [{
+                        name: path.basename(rootPath),
+                        path: rootPath,
+                        files,
+                    }],
+                };
+            }
+            return { clientFolders: [] };
+        }
+
+        // Multi-client mode: 2+ subdirectories, no loose files at root
+        const clientFolders = [];
+        for (const entry of subDirs) {
             const clientDir = path.join(rootPath, entry.name);
             const files = this._walkDir(clientDir, clientDir);
 
@@ -281,7 +297,6 @@ class MigrationQueue {
         if (this._status === QUEUE_STATUS.RUNNING) return;
         this._status = QUEUE_STATUS.RUNNING;
         this.store.set('status', QUEUE_STATUS.RUNNING);
-        this.onProgress(this.getStats());
         this._processNext();
     }
 
@@ -407,9 +422,10 @@ class MigrationQueue {
             if (stats.pending === 0 && stats.uploading === 0) {
                 this._status = QUEUE_STATUS.IDLE;
                 this.store.set('status', QUEUE_STATUS.IDLE);
-                this.onProgress(this.getStats());
             }
         }
+
+        this.onProgress(this.getStats());
     }
 
     async _uploadFile(file) {
@@ -428,6 +444,18 @@ class MigrationQueue {
                 folderPath: file.folderPath === '.' ? '' : file.folderPath,
                 filename: file.filename,
             });
+
+            // Server says this file already exists — skip it
+            if (result.skipped) {
+                this._updateFile(file.id, {
+                    status: FILE_STATUS.SKIPPED,
+                    error: 'Already exists in TaxOne',
+                    documentId: result.document_id,
+                });
+                this.activeUploads--;
+                this._processNext();
+                return;
+            }
 
             // Success
             this._updateFile(file.id, {

@@ -40,7 +40,7 @@
 
 // ── Full standalone preload (if using separate preload for migration window) ──
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     migration: {
@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         getFiles: () => ipcRenderer.invoke('migration:get-files'),
         getHistory: () => ipcRenderer.invoke('migration:get-history'),
         selectFolder: () => ipcRenderer.invoke('migration:select-folder'),
+        getPathForFile: (file) => webUtils.getPathForFile(file),
         getServerUrl: () => ipcRenderer.invoke('get-server-url'),
         onProgress: (callback) => {
             ipcRenderer.on('migration:progress', (_event, stats) => callback(stats));
