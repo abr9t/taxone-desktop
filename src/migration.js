@@ -10,7 +10,7 @@
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 
 // Fuzzy matching — simple Levenshtein-based
 function levenshtein(a, b) {
@@ -251,7 +251,7 @@ class MigrationQueue {
                 if (existing.some(e => e.absolutePath === file.absolutePath)) continue;
 
                 existing.push({
-                    id: uuidv4(),
+                    id: randomUUID(),
                     absolutePath: file.absolutePath,
                     relativePath: file.relativePath,
                     size: file.size,

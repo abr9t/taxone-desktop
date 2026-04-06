@@ -9,9 +9,6 @@
  */
 
 const { ipcMain, dialog, BrowserWindow } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const FormData = require('form-data');
 
 /**
  * @param {MigrationQueue} queue
@@ -100,13 +97,8 @@ function registerMigrationIPC(queue, getWindow, uploader) {
  */
 async function fetchAllClients(uploader) {
     try {
-        // The existing endpoint returns up to 50 at a time with ?search=
-        // For migration, call without search to get all, or call with empty search
-        // If the API doesn't support returning all at once, we fetch page by page
-        const response = await uploader.apiClient.get('/api/desktop/clients', {
-            params: { limit: 9999 },
-        });
-        return response.data.clients || response.data || [];
+        const data = await uploader.searchClients('', 9999);
+        return data.clients || data || [];
     } catch (err) {
         console.error('Failed to fetch clients:', err.message);
         throw err;
@@ -122,24 +114,7 @@ async function fetchAllClients(uploader) {
  */
 function createMigrationUploadFn(uploader) {
     return async (file) => {
-        const formData = new FormData();
-        formData.append('file', fs.createReadStream(file.absolutePath));
-        formData.append('client_id', String(file.clientId));
-        if (file.folderPath) {
-            formData.append('folder_path', file.folderPath);
-        }
-        if (file.filename) {
-            formData.append('filename', file.filename);
-        }
-
-        const response = await uploader.apiClient.post('/api/desktop/upload', formData, {
-            headers: formData.getHeaders(),
-            maxContentLength: 110 * 1024 * 1024, // 110MB
-            maxBodyLength: 110 * 1024 * 1024,
-            timeout: 120000, // 2 min per file
-        });
-
-        return response.data;
+        return uploader.uploadFile(file.absolutePath, file.clientId, file.folderPath || '', file.filename);
     };
 }
 

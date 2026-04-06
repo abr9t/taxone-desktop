@@ -488,8 +488,13 @@ dropZone.addEventListener('drop', async (e) => {
     const items = e.dataTransfer.files;
     if (items.length === 0) return;
 
-    // Use the first dropped item's path
-    const folderPath = items[0].path;
+    // Electron only exposes .path on File objects when nodeIntegration is enabled;
+    // with contextIsolation the property is undefined, so fall back to the folder picker.
+    let folderPath = items[0].path;
+    if (!folderPath) {
+        folderPath = await api.selectFolder();
+    }
+    if (!folderPath) return;
     await scanAndMatch(folderPath);
 });
 

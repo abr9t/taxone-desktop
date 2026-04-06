@@ -67,11 +67,11 @@ async function verifyTokenWith(serverUrl, token) {
     }
 }
 
-async function searchClients(query) {
+async function searchClients(query, limit) {
     const client = await getClient();
-    const res = await client.get('/api/desktop/clients', {
-        params: { search: query || '' },
-    });
+    const params = { search: query || '' };
+    if (limit) params.limit = limit;
+    const res = await client.get('/api/desktop/clients', { params });
     return res.data;
 }
 
