@@ -440,6 +440,7 @@
                 <div class="toolbar-spacer"></div>
                 <button class="btn btn-sm btn-outline" onclick="checkAll()">Check All</button>
                 <button class="btn btn-sm btn-outline" onclick="uncheckUnmatched()">Uncheck Unmatched</button>
+                <button class="btn btn-sm btn-outline" onclick="clearQueued()">Clear Queued</button>
             </div>
             <div class="matching-section" id="matchingSection" style="display:none;">
                 <table class="match-table">
@@ -501,6 +502,8 @@
                 <button class="filter-pill" data-filter="completed" onclick="setFilter('completed')">Completed</button>
                 <button class="filter-pill" data-filter="skipped" onclick="setFilter('skipped')">Skipped</button>
             </div>
+            <input type="text" id="fileSearch" placeholder="Search files..." oninput="renderFiles()"
+                   style="padding:4px 10px; border:1px solid var(--gray-300); border-radius:6px; font-size:12px; width:180px; outline:none;">
             <div class="toolbar-spacer"></div>
             <span id="filterCount" style="font-size:11px; color:var(--gray-400);"></span>
         </div>
@@ -668,25 +671,25 @@ async function scanAndAppendFiles(filePaths) {
             allClients = await api.getClients();
         }
 
-        // Merge into existing loose-files row or create a new one
-        const existing = importRows.find(r => r.folderName === '(loose files)' && !r.queued);
-        if (existing) {
-            // Dedupe by absolutePath
-            const seen = new Set(existing.files.map(f => f.absolutePath));
-            for (const f of looseGroup.files) {
-                if (!seen.has(f.absolutePath)) existing.files.push(f);
-            }
+        // Each drop creates a separate row — never merge into existing
+        const files = looseGroup.files;
+        let rowName;
+        if (files.length === 1) {
+            rowName = files[0].relativePath;
         } else {
-            importRows.push({
-                folderName: '(loose files)',
-                matchType: 'unmatched',
-                client: null,
-                candidates: [],
-                files: looseGroup.files,
-                checked: false,
-                queued: false,
-            });
+            rowName = files[0].relativePath + ` (+${files.length - 1} files)`;
         }
+
+        importRows.push({
+            folderName: rowName,
+            matchType: 'unmatched',
+            client: null,
+            candidates: [],
+            files: files,
+            checked: false,
+            queued: false,
+            isLoose: true,
+        });
 
         renderImportTable();
     } catch (err) {
@@ -940,6 +943,11 @@ function uncheckUnmatched() {
     updateMatchSummary();
 }
 
+function clearQueued() {
+    importRows = importRows.filter(r => !r.queued);
+    renderImportTable();
+}
+
 function updateMatchSummary() {
     const nonQueued = importRows.filter(r => !r.queued);
     const matched = nonQueued.filter(r => r.client).length;
@@ -974,7 +982,7 @@ async function enqueueMatched() {
         const row = importRows[i];
         if (row.queued || !row.checked || !row.client) continue;
 
-        const isLoose = row.folderName === '(loose files)';
+        const isLoose = row.isLoose === true;
         mappings.push({
             clientId: row.client.id,
             clientName: row.client.name,
@@ -1024,26 +1032,32 @@ async function refreshFileList() {
 
 function renderFiles() {
     const container = document.getElementById('fileList');
+    const searchTerm = (document.getElementById('fileSearch').value || '').toLowerCase();
     let files = allFiles;
 
     if (currentFilter !== 'all') {
         files = files.filter(f => f.status === currentFilter);
     }
 
-    document.getElementById('filterCount').textContent = `${files.length} files`;
+    if (searchTerm) {
+        files = files.filter(f => f.filename.toLowerCase().includes(searchTerm));
+    }
+
+    const totalFiltered = files.length;
+    document.getElementById('filterCount').textContent =
+        `Showing ${Math.min(totalFiltered, 200).toLocaleString()} of ${totalFiltered.toLocaleString()} files`;
 
     if (files.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
                 <div class="icon">📋</div>
-                <div>${currentFilter === 'all' ? 'No files in queue' : `No ${currentFilter} files`}</div>
+                <div>${currentFilter === 'all' && !searchTerm ? 'No files in queue' : 'No matching files'}</div>
             </div>
         `;
         return;
     }
 
-    // Render in chunks for performance (30k files)
-    const CHUNK = 500;
+    const CHUNK = 200;
     const visible = files.slice(0, CHUNK);
 
     let html = '';
@@ -1090,8 +1104,13 @@ function renderFileRow(f) {
 
 function showAllFiles() {
     const container = document.getElementById('fileList');
+    const searchTerm = (document.getElementById('fileSearch').value || '').toLowerCase();
     let files = allFiles;
     if (currentFilter !== 'all') files = files.filter(f => f.status === currentFilter);
+    if (searchTerm) files = files.filter(f => f.filename.toLowerCase().includes(searchTerm));
+
+    document.getElementById('filterCount').textContent =
+        `Showing ${files.length.toLocaleString()} of ${files.length.toLocaleString()} files`;
 
     let html = '';
     for (const f of files) html += renderFileRow(f);

@@ -87,10 +87,16 @@ class MigrationQueue {
         this.onFileUpdate = opts.onFileUpdate || (() => {});
         this.onComplete = opts.onComplete || (() => {});
         this.concurrency = opts.concurrency || 3;
-        this.maxRetries = opts.maxRetries || 3;
+        this.maxRetries = opts.maxRetries || 5;
 
         this.activeUploads = 0;
         this._status = this.store.get('status', QUEUE_STATUS.IDLE);
+
+        // In-memory file and history arrays — avoid reading from store on every access
+        this._files = this.store.get('files', []);
+        this._history = this.store.get('history', []);
+        this._saveTimer = null;
+        this._historySaveTimer = null;
 
         // On construct, reset any files stuck in 'uploading' (from a crash) back to pending
         this._recoverCrashedUploads();
@@ -99,15 +105,46 @@ class MigrationQueue {
     // ── Getters ──────────────────────────────────────────────────────────
 
     get files() {
-        return this.store.get('files', []);
+        return this._files;
     }
 
     get history() {
-        return this.store.get('history', []);
+        return this._history;
     }
 
     get status() {
         return this._status;
+    }
+
+    // ── Debounced Save ──────────────────────────────────────────────────
+
+    _scheduleSave() {
+        if (this._saveTimer) return;
+        this._saveTimer = setTimeout(() => {
+            this._saveTimer = null;
+            this.store.set('files', this._files);
+        }, 2000);
+    }
+
+    _scheduleHistorySave() {
+        if (this._historySaveTimer) return;
+        this._historySaveTimer = setTimeout(() => {
+            this._historySaveTimer = null;
+            this.store.set('history', this._history);
+        }, 2000);
+    }
+
+    flushSave() {
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = null;
+        }
+        this.store.set('files', this._files);
+        if (this._historySaveTimer) {
+            clearTimeout(this._historySaveTimer);
+            this._historySaveTimer = null;
+        }
+        this.store.set('history', this._history);
     }
 
     getStats() {
@@ -242,15 +279,13 @@ class MigrationQueue {
      * @param {Array<{clientId, clientName, folderName, files: Array<{relativePath, absolutePath, size}>}>} mappings
      */
     enqueue(mappings) {
-        const existing = this.files;
-
         for (const mapping of mappings) {
             for (const file of mapping.files) {
                 // Dedupe by absolutePath
-                if (existing.some(e => e.absolutePath === file.absolutePath)) continue;
+                if (this._files.some(e => e.absolutePath === file.absolutePath)) continue;
 
                 const isOversized = file.oversized === true;
-                existing.push({
+                this._files.push({
                     id: randomUUID(),
                     absolutePath: file.absolutePath,
                     relativePath: file.relativePath,
@@ -271,7 +306,7 @@ class MigrationQueue {
             }
         }
 
-        this.store.set('files', existing);
+        this.flushSave();
         this.onProgress(this.getStats());
     }
 
@@ -287,6 +322,7 @@ class MigrationQueue {
     pause() {
         this._status = QUEUE_STATUS.PAUSED;
         this.store.set('status', QUEUE_STATUS.PAUSED);
+        this.flushSave();
         this.onProgress(this.getStats());
     }
 
@@ -306,42 +342,37 @@ class MigrationQueue {
      * Retry a single failed file.
      */
     retryFile(fileId) {
-        const files = this.files;
-        const file = files.find(f => f.id === fileId);
+        const file = this._files.find(f => f.id === fileId);
         if (!file || file.status !== FILE_STATUS.FAILED) return;
 
         file.status = FILE_STATUS.PENDING;
         file.error = null;
-        this.store.set('files', files);
+        file.retries = 0;
+        this._scheduleSave();
         this.onFileUpdate(file);
         this.onProgress(this.getStats());
-
-        if (this._status === QUEUE_STATUS.RUNNING) {
-            this._processNext();
-        }
+        this.start();
     }
 
     /**
      * Retry all failed files.
      */
     retryAllFailed() {
-        const files = this.files;
         let changed = false;
 
-        for (const file of files) {
+        for (const file of this._files) {
             if (file.status === FILE_STATUS.FAILED) {
                 file.status = FILE_STATUS.PENDING;
                 file.error = null;
+                file.retries = 0;
                 changed = true;
             }
         }
 
         if (changed) {
-            this.store.set('files', files);
+            this._scheduleSave();
             this.onProgress(this.getStats());
-            if (this._status === QUEUE_STATUS.RUNNING) {
-                this._processNext();
-            }
+            this.start();
         }
     }
 
@@ -349,12 +380,11 @@ class MigrationQueue {
      * Skip a file (won't be uploaded).
      */
     skipFile(fileId) {
-        const files = this.files;
-        const file = files.find(f => f.id === fileId);
+        const file = this._files.find(f => f.id === fileId);
         if (!file || file.status === FILE_STATUS.COMPLETED) return;
 
         file.status = FILE_STATUS.SKIPPED;
-        this.store.set('files', files);
+        this._scheduleSave();
         this.onFileUpdate(file);
         this.onProgress(this.getStats());
     }
@@ -365,7 +395,8 @@ class MigrationQueue {
     clearQueue() {
         this._status = QUEUE_STATUS.IDLE;
         this.store.set('status', QUEUE_STATUS.IDLE);
-        this.store.set('files', []);
+        this._files = [];
+        this.flushSave();
         this.onProgress(this.getStats());
     }
 
@@ -373,18 +404,17 @@ class MigrationQueue {
      * Clear only files with a specific status.
      */
     clearByStatus(status) {
-        const files = this.files.filter(f => f.status !== status);
-        this.store.set('files', files);
+        this._files = this._files.filter(f => f.status !== status);
+        this.flushSave();
         this.onProgress(this.getStats());
     }
 
     // ── Internal Processing ──────────────────────────────────────────────
 
     _recoverCrashedUploads() {
-        const files = this.files;
         let changed = false;
 
-        for (const file of files) {
+        for (const file of this._files) {
             if (file.status === FILE_STATUS.UPLOADING) {
                 file.status = FILE_STATUS.PENDING;
                 changed = true;
@@ -392,15 +422,14 @@ class MigrationQueue {
         }
 
         if (changed) {
-            this.store.set('files', files);
+            this.flushSave();
         }
     }
 
     _processNext() {
         if (this._status !== QUEUE_STATUS.RUNNING) return;
 
-        const files = this.files;
-        const pending = files.filter(f => f.status === FILE_STATUS.PENDING);
+        const pending = this._files.filter(f => f.status === FILE_STATUS.PENDING);
 
         // Fill up to concurrency limit
         while (this.activeUploads < this.concurrency && pending.length > 0) {
@@ -416,6 +445,7 @@ class MigrationQueue {
                 const wasRunning = this._status === QUEUE_STATUS.RUNNING;
                 this._status = QUEUE_STATUS.IDLE;
                 this.store.set('status', QUEUE_STATUS.IDLE);
+                this.flushSave();
                 if (wasRunning) {
                     this.onComplete(stats);
                 }
@@ -462,8 +492,7 @@ class MigrationQueue {
             });
 
             // Add to history
-            const history = this.history;
-            history.unshift({
+            this._history.unshift({
                 id: file.id,
                 filename: file.filename,
                 clientName: file.clientName,
@@ -472,8 +501,8 @@ class MigrationQueue {
                 uploadedAt: new Date().toISOString(),
             });
             // Keep history capped at 5000
-            if (history.length > 5000) history.length = 5000;
-            this.store.set('history', history);
+            if (this._history.length > 5000) this._history.length = 5000;
+            this._scheduleHistorySave();
 
         } catch (err) {
             const retries = (file.retries || 0) + 1;
@@ -513,18 +542,22 @@ class MigrationQueue {
         if (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') return true;
         if (err.code === 'ENOTFOUND') return true;
         if (err.response && err.response.status >= 500) return true;
-        if (err.message && err.message.includes('timeout')) return true;
+        if (err.message && (
+            err.message.includes('timeout') ||
+            err.message.includes('SSL') ||
+            err.message.includes('ECONNRESET') ||
+            err.message.includes('socket hang up')
+        )) return true;
         return false;
     }
 
     _updateFile(fileId, updates) {
-        const files = this.files;
-        const idx = files.findIndex(f => f.id === fileId);
+        const idx = this._files.findIndex(f => f.id === fileId);
         if (idx === -1) return;
 
-        Object.assign(files[idx], updates);
-        this.store.set('files', files);
-        this.onFileUpdate(files[idx]);
+        Object.assign(this._files[idx], updates);
+        this._scheduleSave();
+        this.onFileUpdate(this._files[idx]);
         this.onProgress(this.getStats());
     }
 }

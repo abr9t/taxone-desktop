@@ -103,6 +103,10 @@ function registerMigrationIPC(queue, getWindow, uploader) {
         return queue.history;
     });
 
+    ipcMain.handle('migration:flush-save', async () => {
+        queue.flushSave();
+    });
+
     ipcMain.handle('migration:select-folder', async () => {
         const win = getWindow() || BrowserWindow.getFocusedWindow();
         const result = await dialog.showOpenDialog(win, {

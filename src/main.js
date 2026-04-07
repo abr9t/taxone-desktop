@@ -50,6 +50,12 @@ app.on('window-all-closed', (e) => {
     e.preventDefault();
 });
 
+app.on('before-quit', () => {
+    if (migrationQueue) {
+        migrationQueue.flushSave();
+    }
+});
+
 // ─── Tray ─────────────────────────────────────────────────────────
 
 function createTray() {
@@ -221,7 +227,7 @@ function initMigrationQueue() {
     migrationQueue = new MigrationQueue({
         uploadFn,
         concurrency: 3,
-        maxRetries: 3,
+        maxRetries: 5,
         onProgress: (stats) => {
             if (migrationWindow && !migrationWindow.isDestroyed()) {
                 migrationWindow.webContents.send('migration:progress', stats);
@@ -245,6 +251,22 @@ function initMigrationQueue() {
 
     registerMigrationIPC(migrationQueue, () => migrationWindow, uploader);
     migrationQueue.autoResume();
+
+    // Network reconnection: auto-retry failed files when connection is restored
+    setInterval(async () => {
+        if (!migrationQueue) return;
+        const stats = migrationQueue.getStats();
+        if (stats.failed > 0 && stats.queueStatus === 'idle') {
+            try {
+                const isOnline = await uploader.verifyToken();
+                if (isOnline) {
+                    migrationQueue.retryAllFailed();
+                }
+            } catch {
+                // still offline, do nothing
+            }
+        }
+    }, 30000);
 }
 
 function dequeueFile() {
