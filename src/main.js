@@ -235,6 +235,12 @@ function initMigrationQueue() {
                 migrationWindow.webContents.send('migration:file-update', file);
             }
         },
+        onComplete: (stats) => {
+            new Notification({
+                title: 'TaxOne — Migration Complete',
+                body: `${stats.completed} files uploaded, ${stats.skipped} skipped, ${stats.failed} failed.`,
+            }).show();
+        },
     });
 
     registerMigrationIPC(migrationQueue, () => migrationWindow, uploader);

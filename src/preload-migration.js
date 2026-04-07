@@ -45,6 +45,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
     migration: {
         scanFolders: (folderPaths) => ipcRenderer.invoke('migration:scan-folders', folderPaths),
+        scanFiles: (filePaths) => ipcRenderer.invoke('migration:scan-files', filePaths),
         getClients: () => ipcRenderer.invoke('migration:get-clients'),
         matchClients: (scannedFolders) => ipcRenderer.invoke('migration:match-clients', scannedFolders),
         enqueue: (mappings) => ipcRenderer.invoke('migration:enqueue', mappings),
@@ -54,6 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         retryAllFailed: () => ipcRenderer.invoke('migration:retry-all-failed'),
         skipFile: (fileId) => ipcRenderer.invoke('migration:skip-file', fileId),
         clearQueue: () => ipcRenderer.invoke('migration:clear-queue'),
+        clearByStatus: (status) => ipcRenderer.invoke('migration:clear-by-status', status),
         getStats: () => ipcRenderer.invoke('migration:get-stats'),
         getFiles: () => ipcRenderer.invoke('migration:get-files'),
         getHistory: () => ipcRenderer.invoke('migration:get-history'),

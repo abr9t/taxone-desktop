@@ -12,6 +12,19 @@ const fs = require('fs');
 const Store = require('electron-store');
 const { randomUUID } = require('crypto');
 
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — matches Laravel upload validation
+
+const JUNK_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.sync']);
+const JUNK_EXTENSIONS = new Set(['.tmp', '.crdownload', '.partial']);
+
+function isJunkFile(name) {
+    if (JUNK_NAMES.has(name)) return true;
+    if (name.startsWith('~$') || name.startsWith('.')) return true;
+    const ext = path.extname(name).toLowerCase();
+    if (JUNK_EXTENSIONS.has(ext)) return true;
+    return false;
+}
+
 // Fuzzy matching — simple Levenshtein-based
 function levenshtein(a, b) {
     const m = a.length, n = b.length;
@@ -72,6 +85,7 @@ class MigrationQueue {
         this.uploadFn = opts.uploadFn;
         this.onProgress = opts.onProgress || (() => {});
         this.onFileUpdate = opts.onFileUpdate || (() => {});
+        this.onComplete = opts.onComplete || (() => {});
         this.concurrency = opts.concurrency || 3;
         this.maxRetries = opts.maxRetries || 3;
 
@@ -129,6 +143,9 @@ class MigrationQueue {
     scanClientFolder(clientFolderPath) {
         const name = path.basename(clientFolderPath);
         const files = this._walkDir(clientFolderPath, clientFolderPath);
+        for (const file of files) {
+            if (file.size > MAX_FILE_SIZE) file.oversized = true;
+        }
         return { name, path: clientFolderPath, files };
     }
 
@@ -151,6 +168,7 @@ class MigrationQueue {
                     results.push(...this._walkDir(fullPath, baseDir));
                 }
             } else {
+                if (isJunkFile(entry.name)) continue;
                 const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
                 let size = 0;
                 try { size = fs.statSync(fullPath).size; } catch { /* ignore */ }
@@ -231,6 +249,7 @@ class MigrationQueue {
                 // Dedupe by absolutePath
                 if (existing.some(e => e.absolutePath === file.absolutePath)) continue;
 
+                const isOversized = file.oversized === true;
                 existing.push({
                     id: randomUUID(),
                     absolutePath: file.absolutePath,
@@ -243,9 +262,9 @@ class MigrationQueue {
                     // e.g. if relativePath is "2024/Tax Returns/1040.pdf", folderPath = "2024/Tax Returns"
                     folderPath: path.dirname(file.relativePath).replace(/\\/g, '/'),
                     filename: path.basename(file.relativePath),
-                    status: FILE_STATUS.PENDING,
+                    status: isOversized ? FILE_STATUS.SKIPPED : FILE_STATUS.PENDING,
                     retries: 0,
-                    error: null,
+                    error: isOversized ? 'File exceeds 100MB upload limit' : null,
                     documentId: null,   // set after successful upload
                     uploadedAt: null,
                 });
@@ -350,6 +369,15 @@ class MigrationQueue {
         this.onProgress(this.getStats());
     }
 
+    /**
+     * Clear only files with a specific status.
+     */
+    clearByStatus(status) {
+        const files = this.files.filter(f => f.status !== status);
+        this.store.set('files', files);
+        this.onProgress(this.getStats());
+    }
+
     // ── Internal Processing ──────────────────────────────────────────────
 
     _recoverCrashedUploads() {
@@ -385,8 +413,12 @@ class MigrationQueue {
         if (this.activeUploads === 0 && pending.length === 0) {
             const stats = this.getStats();
             if (stats.pending === 0 && stats.uploading === 0) {
+                const wasRunning = this._status === QUEUE_STATUS.RUNNING;
                 this._status = QUEUE_STATUS.IDLE;
                 this.store.set('status', QUEUE_STATUS.IDLE);
+                if (wasRunning) {
+                    this.onComplete(stats);
+                }
             }
         }
 
@@ -497,4 +529,4 @@ class MigrationQueue {
     }
 }
 
-module.exports = { MigrationQueue, FILE_STATUS, QUEUE_STATUS };
+module.exports = { MigrationQueue, FILE_STATUS, QUEUE_STATUS, MAX_FILE_SIZE };

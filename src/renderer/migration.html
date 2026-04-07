@@ -89,24 +89,26 @@
         .panel { display: none; height: 100%; flex-direction: column; }
         .panel.active { display: flex; }
 
-        /* ── Drop Zone ──────────────────────────────────── */
-        .drop-zone {
+        /* ── Drop Zone (compact, always visible in import tab) ── */
+        .drop-zone-compact {
             border: 2px dashed var(--gray-300);
             border-radius: var(--radius);
-            padding: 48px 24px;
+            padding: 10px 20px;
             text-align: center;
-            margin: 20px;
+            margin: 12px 20px;
             transition: all 0.2s;
             cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
         }
-        .drop-zone:hover, .drop-zone.dragover {
+        .drop-zone-compact:hover, .drop-zone-compact.dragover {
             border-color: var(--amber);
             background: #fffbeb;
         }
-        .drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
-        .drop-zone h3 { font-size: 15px; margin-bottom: 4px; }
-        .drop-zone p { color: var(--gray-500); font-size: 12px; }
-        .drop-zone .or { color: var(--gray-400); margin: 12px 0; font-size: 12px; }
+        .drop-zone-compact .dz-text { font-size: 13px; color: var(--gray-600); }
+        .drop-zone-compact .dz-text strong { color: var(--gray-800); }
 
         /* ── Buttons ────────────────────────────────────── */
         .btn {
@@ -159,6 +161,7 @@
             gap: 16px;
             font-size: 12px;
             color: var(--gray-500);
+            flex-wrap: wrap;
         }
         .progress-stats .stat { display: flex; align-items: center; gap: 4px; }
         .progress-stats .dot {
@@ -169,6 +172,7 @@
         .dot-pending { background: var(--gray-400); }
         .dot-failed { background: var(--red); }
         .dot-uploading { background: var(--amber); }
+        .dot-skipped { background: var(--gray-400); }
 
         .progress-controls { display: flex; gap: 8px; margin-top: 10px; }
 
@@ -195,13 +199,76 @@
         .match-exact { color: var(--green); font-weight: 500; }
         .match-fuzzy { color: var(--amber); font-weight: 500; }
         .match-unmatched { color: var(--red); font-weight: 500; }
+        .match-manual { color: var(--navy); font-weight: 500; }
 
-        .client-select {
-            padding: 4px 8px;
+        .match-row-queued td { opacity: 0.5; }
+        .match-row-queued .queued-label {
+            display: inline-block;
+            font-size: 11px;
+            color: var(--green);
+            font-weight: 500;
+        }
+
+        /* ── Searchable Client Dropdown ─────────────────── */
+        .client-picker {
+            position: relative;
+            min-width: 200px;
+        }
+        .client-picker-input {
+            width: 100%;
+            padding: 4px 28px 4px 8px;
             border: 1px solid var(--gray-300);
             border-radius: 4px;
             font-size: 12px;
-            min-width: 200px;
+            background: white;
+            outline: none;
+        }
+        .client-picker-input:focus { border-color: var(--amber); }
+        .client-picker-input.has-value { color: var(--gray-800); font-weight: 500; }
+        .client-picker-clear {
+            position: absolute;
+            right: 6px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--gray-400);
+            padding: 0 2px;
+            line-height: 1;
+            display: none;
+        }
+        .client-picker-clear:hover { color: var(--gray-700); }
+        .client-picker.has-selection .client-picker-clear { display: block; }
+        .client-picker-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid var(--gray-300);
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 50;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .client-picker.open .client-picker-dropdown { display: block; }
+        .client-picker-option {
+            padding: 6px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .client-picker-option:hover { background: var(--gray-100); }
+        .client-picker-option.highlighted { background: #fef3c7; }
+        .client-picker-empty {
+            padding: 8px;
+            font-size: 11px;
+            color: var(--gray-400);
+            text-align: center;
         }
 
         .match-actions { display: flex; gap: 8px; padding: 12px 20px; background: white; border-top: 1px solid var(--gray-200); }
@@ -295,6 +362,18 @@
         }
         .empty-state .icon { font-size: 32px; }
 
+        /* ── Import empty state ───────────────────────────── */
+        .import-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            color: var(--gray-400);
+            gap: 4px;
+            font-size: 12px;
+        }
+
         /* ── Scanning animation ───────────────────────────── */
         .scanning-overlay {
             display: none;
@@ -316,6 +395,13 @@
             animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Retry flash ──────────────────────────────────── */
+        @keyframes retryFlash {
+            0% { background: #fef3c7; }
+            100% { background: transparent; }
+        }
+        .file-row.retry-flash { animation: retryFlash 1s ease-out; }
     </style>
 </head>
 <body>
@@ -342,25 +428,20 @@
 <div class="content">
     <!-- ═══ IMPORT TAB ═══ -->
     <div class="panel active" id="panel-import">
-        <!-- Step 1: Drop zone -->
-        <div id="step-drop">
-            <div class="drop-zone" id="dropZone">
-                <div class="icon">📁</div>
-                <h3>Drop one or more client folders here</h3>
-                <p>Each folder = one client. Subfolders become the file path in TaxOne.</p>
-                <div class="or">— or —</div>
-                <button class="btn btn-outline" onclick="selectFolder()">Browse for Folder</button>
-            </div>
+        <!-- Compact drop zone — always visible at top -->
+        <div class="drop-zone-compact" id="dropZone">
+            <div class="dz-text">📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); selectFolder();">Browse</button></div>
         </div>
 
-        <!-- Step 2: Client matching -->
-        <div id="step-match" style="display:none; flex:1; flex-direction:column;">
-            <div class="toolbar">
+        <!-- Match table — persistent, grows as you add folders -->
+        <div id="importMatchArea" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+            <div class="toolbar" id="matchToolbar" style="display:none;">
                 <strong id="matchSummary">Matched 0 of 0 clients</strong>
                 <div class="toolbar-spacer"></div>
-                <button class="btn btn-sm btn-outline" onclick="backToDrop()">← Back</button>
+                <button class="btn btn-sm btn-outline" onclick="checkAll()">Check All</button>
+                <button class="btn btn-sm btn-outline" onclick="uncheckUnmatched()">Uncheck Unmatched</button>
             </div>
-            <div class="matching-section">
+            <div class="matching-section" id="matchingSection" style="display:none;">
                 <table class="match-table">
                     <thead>
                         <tr>
@@ -374,13 +455,15 @@
                     <tbody id="matchBody"></tbody>
                 </table>
             </div>
-            <div class="match-actions">
+            <div class="match-actions" id="matchActions" style="display:none;">
                 <button class="btn btn-amber" id="btnEnqueue" onclick="enqueueMatched()">
-                    Add Matched Files to Queue
+                    Add Matched Clients to Queue
                 </button>
-                <button class="btn btn-sm btn-outline" onclick="checkAll()">Check All</button>
-                <button class="btn btn-sm btn-outline" onclick="uncheckUnmatched()">Uncheck Unmatched</button>
                 <span id="enqueueInfo" style="font-size:12px; color:var(--gray-500); align-self:center;"></span>
+            </div>
+            <div class="import-empty" id="importEmpty">
+                <div style="font-size:24px;">📋</div>
+                <div>Drop folders above to scan and match clients</div>
             </div>
         </div>
     </div>
@@ -396,14 +479,16 @@
                 <div class="stat"><span class="dot dot-uploading"></span> <span id="statUploading">0</span> uploading</div>
                 <div class="stat"><span class="dot dot-pending"></span> <span id="statPending">0</span> pending</div>
                 <div class="stat"><span class="dot dot-failed"></span> <span id="statFailed">0</span> failed</div>
+                <div class="stat"><span class="dot dot-skipped"></span> <span id="statSkipped">0</span> skipped</div>
                 <div class="stat" style="color:var(--gray-700); font-weight:500;"><span id="statPercent">0</span>%</div>
+                <div class="stat" id="statSize" style="color:var(--gray-500);"></div>
             </div>
             <div class="progress-controls">
                 <button class="btn btn-sm btn-amber" id="btnStart" onclick="startQueue()">▶ Start</button>
                 <button class="btn btn-sm btn-outline" id="btnPause" onclick="pauseQueue()" style="display:none;">⏸ Pause</button>
                 <button class="btn btn-sm btn-outline" id="btnRetryAll" onclick="retryAllFailed()">↻ Retry Failed</button>
                 <div class="toolbar-spacer"></div>
-                <button class="btn btn-sm btn-outline" id="btnClear" onclick="clearQueue()">Clear Queue</button>
+                <button class="btn btn-sm btn-outline" id="btnClear" onclick="clearFiltered()">Clear All</button>
             </div>
         </div>
 
@@ -414,6 +499,7 @@
                 <button class="filter-pill" data-filter="uploading" onclick="setFilter('uploading')">Uploading</button>
                 <button class="filter-pill" data-filter="failed" onclick="setFilter('failed')">Failed</button>
                 <button class="filter-pill" data-filter="completed" onclick="setFilter('completed')">Completed</button>
+                <button class="filter-pill" data-filter="skipped" onclick="setFilter('skipped')">Skipped</button>
             </div>
             <div class="toolbar-spacer"></div>
             <span id="filterCount" style="font-size:11px; color:var(--gray-400);"></span>
@@ -456,12 +542,13 @@ const api = window.electronAPI.migration;
 // ── State ──────────────────────────────────────────────────────────────
 
 let currentTab = 'import';
-let scanResult = null;       // { clientFolders }
-let matchResult = null;      // array of match objects
-let allClients = [];         // from TaxOne API
 let currentFilter = 'all';
 let allFiles = [];           // cached file list
-let rowChecked = [];         // checkbox state per match row
+let allClients = [];         // from TaxOne API
+
+// Persistent import staging state
+// Each entry: { folderName, matchType, client, candidates, files, queued }
+let importRows = [];
 
 // ── Tabs ───────────────────────────────────────────────────────────────
 
@@ -489,48 +576,79 @@ dropZone.addEventListener('drop', async (e) => {
     e.stopPropagation();
     dropZone.classList.remove('dragover');
 
-    const items = e.dataTransfer.files;
-    const paths = [];
-    for (const file of items) {
-        try {
-            const p = api.getPathForFile(file);
-            if (p) paths.push(p);
-        } catch { /* ignore */ }
+    const items = e.dataTransfer.items;
+    const folderPaths = [];
+    const filePaths = [];
+
+    for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+        const file = e.dataTransfer.files[i];
+        if (!file) continue;
+        let p;
+        try { p = api.getPathForFile(file); } catch { continue; }
+        if (!p) continue;
+
+        if (entry && entry.isDirectory) {
+            folderPaths.push(p);
+        } else {
+            filePaths.push(p);
+        }
     }
-    if (paths.length === 0) {
+
+    if (folderPaths.length === 0 && filePaths.length === 0) {
         const p = await api.selectFolder();
-        if (p) paths.push(p);
+        if (p) folderPaths.push(p);
     }
-    if (paths.length === 0) return;
-    await scanAndMatch(paths);
+    if (folderPaths.length > 0) await scanAndAppend(folderPaths);
+    if (filePaths.length > 0) await scanAndAppendFiles(filePaths);
 });
 
 async function selectFolder() {
     const folderPath = await api.selectFolder();
     if (!folderPath) return;
-    await scanAndMatch([folderPath]);
+    await scanAndAppend([folderPath]);
 }
 
-// ── Scan & Match ───────────────────────────────────────────────────────
+// ── Scan & Append (additive) ──────────────────────────────────────────
 
-async function scanAndMatch(folderPaths) {
+async function scanAndAppend(folderPaths) {
     const overlay = document.getElementById('scanningOverlay');
     overlay.classList.add('active');
 
     try {
         document.getElementById('scanningDetail').textContent = 'Reading directory tree...';
-        scanResult = await api.scanFolders(folderPaths);
+        const scanResult = await api.scanFolders(folderPaths);
 
         const totalFiles = scanResult.clientFolders.reduce((sum, cf) => sum + cf.files.length, 0);
         document.getElementById('scanningDetail').textContent =
             `Found ${scanResult.clientFolders.length} client folders, ${totalFiles.toLocaleString()} files. Matching clients...`;
 
-        matchResult = await api.matchClients(scanResult.clientFolders);
+        const matchResult = await api.matchClients(scanResult.clientFolders);
 
-        // Also fetch all clients for the dropdowns
-        allClients = await api.getClients();
+        // Fetch all clients if we haven't yet
+        if (allClients.length === 0) {
+            allClients = await api.getClients();
+        }
 
-        showMatchStep();
+        // Append new rows (skip duplicates by folder name)
+        for (let i = 0; i < matchResult.length; i++) {
+            const m = matchResult[i];
+            const folder = scanResult.clientFolders[i];
+            const existing = importRows.find(r => r.folderName === m.folderName);
+            if (existing) continue; // don't add duplicates
+
+            importRows.push({
+                folderName: m.folderName,
+                matchType: m.matchType,
+                client: m.client,
+                candidates: m.candidates,
+                files: folder.files,
+                checked: m.matchType !== 'unmatched',
+                queued: false,
+            });
+        }
+
+        renderImportTable();
     } catch (err) {
         alert('Error scanning folder: ' + err.message);
     } finally {
@@ -538,95 +656,108 @@ async function scanAndMatch(folderPaths) {
     }
 }
 
-function showMatchStep() {
-    document.getElementById('step-drop').style.display = 'none';
-    const stepMatch = document.getElementById('step-match');
-    stepMatch.style.display = 'flex';
+async function scanAndAppendFiles(filePaths) {
+    const overlay = document.getElementById('scanningOverlay');
+    overlay.classList.add('active');
 
-    renderMatchTable();
+    try {
+        document.getElementById('scanningDetail').textContent = 'Reading loose files...';
+        const looseGroup = await api.scanFiles(filePaths);
+
+        if (allClients.length === 0) {
+            allClients = await api.getClients();
+        }
+
+        // Merge into existing loose-files row or create a new one
+        const existing = importRows.find(r => r.folderName === '(loose files)' && !r.queued);
+        if (existing) {
+            // Dedupe by absolutePath
+            const seen = new Set(existing.files.map(f => f.absolutePath));
+            for (const f of looseGroup.files) {
+                if (!seen.has(f.absolutePath)) existing.files.push(f);
+            }
+        } else {
+            importRows.push({
+                folderName: '(loose files)',
+                matchType: 'unmatched',
+                client: null,
+                candidates: [],
+                files: looseGroup.files,
+                checked: false,
+                queued: false,
+            });
+        }
+
+        renderImportTable();
+    } catch (err) {
+        alert('Error scanning files: ' + err.message);
+    } finally {
+        overlay.classList.remove('active');
+    }
 }
 
-function backToDrop() {
-    document.getElementById('step-drop').style.display = 'block';
-    document.getElementById('step-match').style.display = 'none';
-    scanResult = null;
-    matchResult = null;
-}
+// ── Import Table Rendering ────────────────────────────────────────────
 
-function renderMatchTable() {
+function renderImportTable() {
+    const hasRows = importRows.length > 0;
+    document.getElementById('matchToolbar').style.display = hasRows ? '' : 'none';
+    document.getElementById('matchingSection').style.display = hasRows ? '' : 'none';
+    document.getElementById('matchActions').style.display = hasRows ? '' : 'none';
+    document.getElementById('importEmpty').style.display = hasRows ? 'none' : '';
+
     const body = document.getElementById('matchBody');
     body.innerHTML = '';
 
-    // Initialize checkbox state: checked by default, unchecked for unmatched
-    rowChecked = matchResult.map(m => m.matchType !== 'unmatched');
-
-    for (let i = 0; i < matchResult.length; i++) {
-        const m = matchResult[i];
-        const folder = scanResult.clientFolders[i];
+    for (let i = 0; i < importRows.length; i++) {
+        const row = importRows[i];
         const tr = document.createElement('tr');
+        if (row.queued) tr.className = 'match-row-queued';
 
         // Checkbox
         const tdCheck = document.createElement('td');
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = rowChecked[i];
-        cb.dataset.index = i;
-        cb.onchange = () => {
-            rowChecked[i] = cb.checked;
-            updateMatchSummary();
-        };
-        tdCheck.appendChild(cb);
+        if (row.queued) {
+            tdCheck.innerHTML = '<span class="queued-label">queued</span>';
+        } else {
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = row.checked;
+            cb.dataset.index = i;
+            cb.onchange = () => {
+                importRows[i].checked = cb.checked;
+                updateMatchSummary();
+            };
+            tdCheck.appendChild(cb);
+        }
         tr.appendChild(tdCheck);
 
         // Folder name
         const tdFolder = document.createElement('td');
-        tdFolder.textContent = m.folderName;
+        tdFolder.textContent = row.folderName;
         tr.appendChild(tdFolder);
 
         // Match type badge
         const tdMatch = document.createElement('td');
-        const className = `match-${m.matchType}`;
-        tdMatch.innerHTML = `<span class="${className}">${m.matchType}</span>`;
+        const className = `match-${row.matchType}`;
+        tdMatch.innerHTML = `<span class="${className}">${row.matchType}</span>`;
         tr.appendChild(tdMatch);
 
-        // Client selector
+        // Client picker
         const tdClient = document.createElement('td');
-        const select = document.createElement('select');
-        select.className = 'client-select';
-        select.dataset.index = i;
-
-        const optNone = document.createElement('option');
-        optNone.value = '';
-        optNone.textContent = '— Skip (no client) —';
-        select.appendChild(optNone);
-
-        for (const c of allClients) {
-            const opt = document.createElement('option');
-            opt.value = c.id;
-            opt.textContent = c.name;
-            if (m.client && m.client.id === c.id) opt.selected = true;
-            select.appendChild(opt);
+        if (row.queued) {
+            tdClient.textContent = row.client ? row.client.name : '—';
+        } else {
+            tdClient.appendChild(createClientPicker(i, row.client));
         }
-
-        select.onchange = () => {
-            const clientId = select.value;
-            if (clientId) {
-                const client = allClients.find(c => String(c.id) === clientId);
-                matchResult[i].client = client;
-                matchResult[i].matchType = 'manual';
-            } else {
-                matchResult[i].client = null;
-                matchResult[i].matchType = 'unmatched';
-            }
-            updateMatchSummary();
-        };
-
-        tdClient.appendChild(select);
         tr.appendChild(tdClient);
 
-        // File count
+        // File count (with oversized indicator)
         const tdFiles = document.createElement('td');
-        tdFiles.textContent = folder.files.length.toLocaleString();
+        const oversizedCount = row.files.filter(f => f.oversized).length;
+        let fileCountText = row.files.length.toLocaleString();
+        if (oversizedCount > 0) {
+            fileCountText += ` (${oversizedCount} oversized)`;
+        }
+        tdFiles.textContent = fileCountText;
         tr.appendChild(tdFiles);
 
         body.appendChild(tr);
@@ -635,16 +766,173 @@ function renderMatchTable() {
     updateMatchSummary();
 }
 
+// ── Searchable Client Picker ──────────────────────────────────────────
+
+function createClientPicker(rowIndex, selectedClient) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'client-picker' + (selectedClient ? ' has-selection' : '');
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'client-picker-input' + (selectedClient ? ' has-value' : '');
+    input.placeholder = '— Skip (no client) —';
+    input.value = selectedClient ? selectedClient.name : '';
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'client-picker-clear';
+    clearBtn.textContent = '\u00d7';
+    clearBtn.tabIndex = -1;
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'client-picker-dropdown';
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(clearBtn);
+    wrapper.appendChild(dropdown);
+
+    let highlightIndex = -1;
+
+    function renderOptions(filter) {
+        dropdown.innerHTML = '';
+        const query = (filter || '').toLowerCase();
+        const filtered = query
+            ? allClients.filter(c => c.name.toLowerCase().includes(query)).slice(0, 10)
+            : allClients.slice(0, 10);
+
+        if (filtered.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'client-picker-empty';
+            empty.textContent = query ? 'No matching clients' : 'No clients available';
+            dropdown.appendChild(empty);
+            return;
+        }
+
+        highlightIndex = -1;
+        for (let j = 0; j < filtered.length; j++) {
+            const opt = document.createElement('div');
+            opt.className = 'client-picker-option';
+            opt.textContent = filtered[j].name;
+            opt.dataset.clientId = filtered[j].id;
+            opt.onmousedown = (e) => {
+                e.preventDefault();
+                selectClient(filtered[j]);
+            };
+            dropdown.appendChild(opt);
+        }
+    }
+
+    function selectClient(client) {
+        importRows[rowIndex].client = client;
+        importRows[rowIndex].matchType = 'manual';
+        input.value = client.name;
+        input.classList.add('has-value');
+        wrapper.classList.add('has-selection');
+        closeDropdown();
+        updateMatchSummary();
+    }
+
+    function clearSelection() {
+        importRows[rowIndex].client = null;
+        importRows[rowIndex].matchType = 'unmatched';
+        input.value = '';
+        input.classList.remove('has-value');
+        wrapper.classList.remove('has-selection');
+        updateMatchSummary();
+    }
+
+    function openDropdown() {
+        renderOptions(input.value);
+        wrapper.classList.add('open');
+    }
+
+    function closeDropdown() {
+        wrapper.classList.remove('open');
+        highlightIndex = -1;
+    }
+
+    input.addEventListener('focus', () => {
+        if (wrapper.classList.contains('has-selection')) {
+            input.select();
+        }
+        openDropdown();
+    });
+
+    input.addEventListener('input', () => {
+        wrapper.classList.remove('has-selection');
+        renderOptions(input.value);
+        if (!wrapper.classList.contains('open')) openDropdown();
+    });
+
+    input.addEventListener('blur', () => {
+        // Small delay so click on option fires first
+        setTimeout(() => {
+            closeDropdown();
+            // If user typed something but didn't select, revert
+            if (!wrapper.classList.contains('has-selection')) {
+                if (importRows[rowIndex].client) {
+                    input.value = importRows[rowIndex].client.name;
+                    input.classList.add('has-value');
+                    wrapper.classList.add('has-selection');
+                } else {
+                    input.value = '';
+                }
+            }
+        }, 150);
+    });
+
+    input.addEventListener('keydown', (e) => {
+        const options = dropdown.querySelectorAll('.client-picker-option');
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            highlightIndex = Math.min(highlightIndex + 1, options.length - 1);
+            updateHighlight(options);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            highlightIndex = Math.max(highlightIndex - 1, 0);
+            updateHighlight(options);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (highlightIndex >= 0 && options[highlightIndex]) {
+                const id = options[highlightIndex].dataset.clientId;
+                const client = allClients.find(c => String(c.id) === id);
+                if (client) selectClient(client);
+            }
+        } else if (e.key === 'Escape') {
+            closeDropdown();
+            input.blur();
+        }
+    });
+
+    function updateHighlight(options) {
+        options.forEach((o, j) => o.classList.toggle('highlighted', j === highlightIndex));
+        if (options[highlightIndex]) {
+            options[highlightIndex].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    clearBtn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        clearSelection();
+        input.focus();
+    });
+
+    return wrapper;
+}
+
+// ── Check/Uncheck helpers ─────────────────────────────────────────────
+
 function checkAll() {
-    rowChecked = rowChecked.map(() => true);
+    for (let i = 0; i < importRows.length; i++) {
+        if (!importRows[i].queued) importRows[i].checked = true;
+    }
     document.querySelectorAll('#matchBody input[type="checkbox"]').forEach(cb => { cb.checked = true; });
     updateMatchSummary();
 }
 
 function uncheckUnmatched() {
-    for (let i = 0; i < matchResult.length; i++) {
-        if (!matchResult[i].client) {
-            rowChecked[i] = false;
+    for (let i = 0; i < importRows.length; i++) {
+        if (!importRows[i].queued && !importRows[i].client) {
+            importRows[i].checked = false;
             const cb = document.querySelector(`#matchBody input[data-index="${i}"]`);
             if (cb) cb.checked = false;
         }
@@ -653,20 +941,20 @@ function uncheckUnmatched() {
 }
 
 function updateMatchSummary() {
-    const matched = matchResult.filter(m => m.client).length;
-    const total = matchResult.length;
+    const nonQueued = importRows.filter(r => !r.queued);
+    const matched = nonQueued.filter(r => r.client).length;
+    const total = nonQueued.length;
 
-    // Only count checked rows with a client assigned
     let queuedFiles = 0;
     let queuedClients = 0;
     let skippedFiles = 0;
-    for (let i = 0; i < matchResult.length; i++) {
-        const fileCount = scanResult.clientFolders[i].files.length;
-        if (rowChecked[i] && matchResult[i].client) {
-            queuedFiles += fileCount;
+    for (const row of importRows) {
+        if (row.queued) continue;
+        if (row.checked && row.client) {
+            queuedFiles += row.files.length;
             queuedClients++;
         } else {
-            skippedFiles += fileCount;
+            skippedFiles += row.files.length;
         }
     }
 
@@ -682,25 +970,27 @@ function updateMatchSummary() {
 async function enqueueMatched() {
     const mappings = [];
 
-    for (let i = 0; i < matchResult.length; i++) {
-        const m = matchResult[i];
-        if (!rowChecked[i] || !m.client) continue;
+    for (let i = 0; i < importRows.length; i++) {
+        const row = importRows[i];
+        if (row.queued || !row.checked || !row.client) continue;
 
-        const folder = scanResult.clientFolders[i];
+        const isLoose = row.folderName === '(loose files)';
         mappings.push({
-            clientId: m.client.id,
-            clientName: m.client.name,
-            folderName: m.folderName,
-            files: folder.files,
+            clientId: row.client.id,
+            clientName: row.client.name,
+            folderName: isLoose ? '' : row.folderName,
+            files: row.files,
         });
+
+        // Mark as queued
+        row.queued = true;
+        row.checked = false;
     }
 
     if (mappings.length === 0) return;
 
     await api.enqueue(mappings);
-    switchTab('queue');
-    await refreshFileList();
-    backToDrop(); // reset import step
+    renderImportTable(); // re-render to show queued state
 }
 
 // ── Queue Tab ──────────────────────────────────────────────────────────
@@ -711,6 +1001,17 @@ function setFilter(filter) {
         p.classList.toggle('active', p.dataset.filter === filter)
     );
     renderFiles();
+    updateClearButtonText();
+}
+
+function updateClearButtonText() {
+    const btn = document.getElementById('btnClear');
+    if (currentFilter === 'all') {
+        btn.textContent = 'Clear All';
+    } else {
+        const label = currentFilter.charAt(0).toUpperCase() + currentFilter.slice(1);
+        btn.textContent = `Clear ${label}`;
+    }
 }
 
 async function refreshFileList() {
@@ -718,6 +1019,7 @@ async function refreshFileList() {
     const stats = await api.getStats();
     updateProgressUI(stats);
     renderFiles();
+    updateClearButtonText();
 }
 
 function renderFiles() {
@@ -741,7 +1043,6 @@ function renderFiles() {
     }
 
     // Render in chunks for performance (30k files)
-    // Show first 500, add "show more" button
     const CHUNK = 500;
     const visible = files.slice(0, CHUNK);
 
@@ -776,7 +1077,7 @@ function renderFileRow(f) {
         <div class="file-client" title="${escHtml(f.clientName)}">${escHtml(f.clientName)}</div>
         <div class="file-folder" title="${escHtml(f.folderPath || '/')}">${escHtml(f.folderPath || '/')}</div>
         <div class="file-size">${formatSize(f.size)}</div>
-        <div class="file-status"><span class="status-badge ${statusClass}">${f.status}</span></div>
+        <div class="file-status"><span class="status-badge ${statusClass}" id="badge-${f.id}">${f.status}</span></div>
         <div class="file-actions">${actions.join('')}</div>
     </div>`;
 
@@ -813,6 +1114,22 @@ async function pauseQueue() {
 
 async function retryFile(fileId) {
     await api.retryFile(fileId);
+
+    // Visual feedback: flash the row and show "retrying..." badge
+    const badge = document.getElementById(`badge-${fileId}`);
+    if (badge) {
+        badge.textContent = 'retrying...';
+        badge.className = 'status-badge status-uploading';
+        setTimeout(() => {
+            badge.textContent = 'pending';
+            badge.className = 'status-badge status-pending';
+        }, 1000);
+    }
+    const row = document.getElementById(`file-${fileId}`);
+    if (row) {
+        row.classList.add('retry-flash');
+        setTimeout(() => row.classList.remove('retry-flash'), 1000);
+    }
 }
 
 async function skipFile(fileId) {
@@ -823,9 +1140,15 @@ async function retryAllFailed() {
     await api.retryAllFailed();
 }
 
-async function clearQueue() {
-    if (!confirm('Clear all files from the queue? Completed uploads remain in history.')) return;
-    await api.clearQueue();
+async function clearFiltered() {
+    if (currentFilter === 'all') {
+        if (!confirm('Clear all files from the queue? Completed uploads remain in history.')) return;
+        await api.clearQueue();
+    } else {
+        const label = currentFilter.charAt(0).toUpperCase() + currentFilter.slice(1);
+        if (!confirm(`Clear all ${currentFilter} files from the queue?`)) return;
+        await api.clearByStatus(currentFilter);
+    }
     refreshFileList();
 }
 
@@ -837,7 +1160,18 @@ function updateProgressUI(stats) {
     document.getElementById('statUploading').textContent = stats.uploading;
     document.getElementById('statPending').textContent = stats.pending.toLocaleString();
     document.getElementById('statFailed').textContent = stats.failed.toLocaleString();
+    document.getElementById('statSkipped').textContent = stats.skipped.toLocaleString();
     document.getElementById('statPercent').textContent = stats.percent;
+
+    // Size stats
+    let uploadedSize = 0;
+    let totalSize = 0;
+    for (const f of allFiles) {
+        totalSize += f.size || 0;
+        if (f.status === 'completed') uploadedSize += f.size || 0;
+    }
+    document.getElementById('statSize').textContent =
+        totalSize > 0 ? `${formatSize(uploadedSize)} / ${formatSize(totalSize)}` : '';
 
     document.getElementById('queueBadge').textContent =
         (stats.pending + stats.uploading).toLocaleString();

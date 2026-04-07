@@ -9,6 +9,9 @@
  */
 
 const { ipcMain, dialog, BrowserWindow } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { MAX_FILE_SIZE } = require('./migration');
 
 /**
  * @param {MigrationQueue} queue
@@ -20,6 +23,21 @@ function registerMigrationIPC(queue, getWindow, uploader) {
     ipcMain.handle('migration:scan-folders', async (_event, folderPaths) => {
         const clientFolders = folderPaths.map(p => queue.scanClientFolder(p));
         return { clientFolders };
+    });
+
+    ipcMain.handle('migration:scan-files', async (_event, filePaths) => {
+        const files = filePaths.map(fp => {
+            let size = 0;
+            try { size = fs.statSync(fp).size; } catch { /* ignore */ }
+            const entry = {
+                relativePath: path.basename(fp),
+                absolutePath: fp,
+                size,
+            };
+            if (size > MAX_FILE_SIZE) entry.oversized = true;
+            return entry;
+        });
+        return { name: '(loose files)', path: null, files };
     });
 
     ipcMain.handle('migration:get-clients', async () => {
@@ -65,6 +83,11 @@ function registerMigrationIPC(queue, getWindow, uploader) {
 
     ipcMain.handle('migration:clear-queue', async () => {
         queue.clearQueue();
+        return queue.getStats();
+    });
+
+    ipcMain.handle('migration:clear-by-status', async (_event, status) => {
+        queue.clearByStatus(status);
         return queue.getStats();
     });
 
