@@ -18,14 +18,60 @@ let migrationQueue = null;
 // Queue of files pending confirmation — managed here, not in renderer
 const pendingFiles = [];
 
+// ─── Custom Protocol ─────────────────────────────────────────────
+
+if (process.defaultApp) {
+    app.setAsDefaultProtocolClient('taxone-desktop',
+        process.execPath, [path.resolve(process.argv[1])]);
+} else {
+    app.setAsDefaultProtocolClient('taxone-desktop');
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
     app.quit();
 }
 
-app.on('second-instance', () => {
-    showSettings();
+app.on('second-instance', (event, commandLine) => {
+    const url = commandLine.find(arg => arg.startsWith('taxone-desktop://'));
+    if (url) {
+        handleAuthUrl(url);
+    } else {
+        showMigrationTool();
+    }
 });
+
+async function handleAuthUrl(url) {
+    try {
+        const parsed = new URL(url);
+        const token = parsed.searchParams.get('token');
+        const serverUrl = parsed.searchParams.get('url');
+
+        if (!token || !serverUrl) return;
+
+        await auth.saveToken(token);
+        await auth.saveServerUrl(serverUrl);
+        uploader.configure(serverUrl, token);
+
+        if (loginWindow && !loginWindow.isDestroyed()) {
+            loginWindow.close();
+        }
+
+        startWatching();
+        initMigrationQueue();
+
+        if (migrationWindow && !migrationWindow.isDestroyed()) {
+            migrationWindow.webContents.send('migration:auth-changed', true);
+        }
+
+        new Notification({
+            title: 'TaxOne Desktop',
+            body: 'Successfully signed in.',
+        }).show();
+    } catch (err) {
+        console.error('Auth URL handling failed:', err);
+    }
+}
 
 // ─── App Lifecycle ────────────────────────────────────────────────
 
@@ -479,4 +525,9 @@ ipcMain.handle('queue:state', async () => {
         total: pendingFiles.length,
         current: pendingFiles[0] || null,
     };
+});
+
+// Open external URL (for browser sign-in)
+ipcMain.handle('open-external', async (_event, url) => {
+    shell.openExternal(url);
 });

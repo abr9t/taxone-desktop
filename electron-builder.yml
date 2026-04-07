@@ -10,6 +10,11 @@ files:
   - node_modules/**/*
   - package.json
 
+protocols:
+  - name: TaxOne Desktop
+    schemes:
+      - taxone-desktop
+
 win:
   target: nsis
   icon: assets/icon.ico

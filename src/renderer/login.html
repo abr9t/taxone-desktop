@@ -28,7 +28,7 @@
         }
         h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
         .subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 28px; }
-        form {
+        .login-content {
             width: 100%;
             -webkit-app-region: no-drag;
         }
@@ -61,9 +61,9 @@
             margin-top: -12px;
             margin-bottom: 16px;
         }
-        button {
+        .btn-primary {
             width: 100%;
-            padding: 11px;
+            padding: 12px;
             border: none;
             border-radius: 8px;
             background: #e8a020;
@@ -73,8 +73,57 @@
             cursor: pointer;
             transition: background 0.15s;
         }
-        button:hover { background: #d4911c; }
-        button:disabled { opacity: 0.5; cursor: default; }
+        .btn-primary:hover { background: #d4911c; }
+        .btn-primary:disabled { opacity: 0.5; cursor: default; }
+        .btn-secondary {
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: transparent;
+            color: #94a3b8;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn-secondary:hover { background: #334155; }
+        .btn-secondary:disabled { opacity: 0.5; cursor: default; }
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 20px 0;
+            gap: 12px;
+            font-size: 12px;
+            color: #475569;
+        }
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #334155;
+        }
+        .token-section {
+            overflow: hidden;
+            max-height: 0;
+            opacity: 0;
+            transition: max-height 0.3s ease, opacity 0.2s ease;
+        }
+        .token-section.open {
+            max-height: 300px;
+            opacity: 1;
+        }
+        .toggle-token {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            background: transparent;
+            color: #64748b;
+            font-size: 12px;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+        .toggle-token:hover { color: #94a3b8; }
         .error {
             background: #7f1d1d;
             color: #fca5a5;
@@ -139,19 +188,33 @@
     <h1>TaxOne Desktop</h1>
     <p class="subtitle">Connect to your TaxOne account</p>
 
-    <form id="loginForm">
+    <div class="login-content" id="loginContent">
         <label for="serverUrl">Server URL</label>
         <input type="url" id="serverUrl" placeholder="https://taxone.cpa" required>
         <p class="hint">Your firm's TaxOne URL</p>
 
-        <label for="token">API Token</label>
-        <input type="password" id="token" placeholder="Paste your token here" required>
-        <p class="hint">Generate a token in Firm Settings → Integrations → Desktop App</p>
-
         <div class="error" id="error"></div>
 
-        <button type="submit" id="submitBtn">Connect</button>
-    </form>
+        <button class="btn-primary" id="browserSignInBtn" onclick="signInWithBrowser()">
+            Sign in with Browser
+        </button>
+
+        <div class="divider">&mdash; or &mdash;</div>
+
+        <button class="toggle-token" onclick="toggleTokenSection()">
+            Paste token manually &#9662;
+        </button>
+
+        <div class="token-section" id="tokenSection">
+            <label for="token">API Token</label>
+            <input type="password" id="token" placeholder="Paste your token here">
+            <p class="hint">Generate a token in Firm Settings &rarr; Integrations &rarr; Desktop App</p>
+
+            <button class="btn-secondary" id="tokenSubmitBtn" onclick="connectWithToken()">
+                Connect
+            </button>
+        </div>
+    </div>
 
     <div class="success-state" id="successState">
         <div class="success-check">&#10003;</div>
@@ -162,38 +225,73 @@
 
     <p class="help">
         Need help? Open TaxOne in your browser and go to<br>
-        Firm Settings → Integrations → Desktop App
+        Firm Settings &rarr; Integrations &rarr; Desktop App
     </p>
 
     <script>
-        const form = document.getElementById('loginForm');
         const errorEl = document.getElementById('error');
-        const submitBtn = document.getElementById('submitBtn');
+        const browserSignInBtn = document.getElementById('browserSignInBtn');
+        const tokenSubmitBtn = document.getElementById('tokenSubmitBtn');
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
+        function showError(msg) {
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+        }
+
+        function hideError() {
             errorEl.style.display = 'none';
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Connecting...';
+        }
 
-            const serverUrl = document.getElementById('serverUrl').value.trim();
+        function getServerUrl() {
+            return document.getElementById('serverUrl').value.trim();
+        }
+
+        function toggleTokenSection() {
+            document.getElementById('tokenSection').classList.toggle('open');
+        }
+
+        async function signInWithBrowser() {
+            hideError();
+            const serverUrl = getServerUrl();
+            if (!serverUrl) {
+                showError('Enter your TaxOne URL first.');
+                return;
+            }
+            const url = serverUrl.replace(/\/+$/, '') + '/desktop/authorize';
+            window.taxone.openExternal(url);
+        }
+
+        async function connectWithToken() {
+            hideError();
+            const serverUrl = getServerUrl();
             const token = document.getElementById('token').value.trim();
+
+            if (!serverUrl) {
+                showError('Enter your TaxOne URL first.');
+                return;
+            }
+            if (!token) {
+                showError('Enter your API token.');
+                return;
+            }
+
+            tokenSubmitBtn.disabled = true;
+            tokenSubmitBtn.textContent = 'Connecting...';
 
             const result = await window.taxone.login({ serverUrl, token });
 
             if (result.success) {
-                document.getElementById('loginForm').style.display = 'none';
+                document.getElementById('loginContent').style.display = 'none';
                 document.querySelector('.help').style.display = 'none';
                 document.getElementById('successUrl').textContent = serverUrl;
                 document.getElementById('successState').style.display = 'block';
                 setTimeout(() => window.close(), 2000);
             } else {
-                errorEl.textContent = result.error;
-                errorEl.style.display = 'block';
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Connect';
+                showError(result.error);
+                tokenSubmitBtn.disabled = false;
+                tokenSubmitBtn.textContent = 'Connect';
             }
-        });
+        }
     </script>
 </body>
 </html>
