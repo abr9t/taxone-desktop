@@ -9,6 +9,7 @@ const Store = require('electron-store');
 const appStore = new Store();
 
 let tray = null;
+let trayMenu = null;
 let loginWindow = null;
 let settingsWindow = null;
 let confirmWindow = null;
@@ -113,12 +114,17 @@ app.whenReady().then(async () => {
         } else {
             startWatching();
             initMigrationQueue();
+            showMigrationTool();
         }
     }
 });
 
 app.on('window-all-closed', (e) => {
     e.preventDefault();
+});
+
+app.on('activate', () => {
+    showMigrationTool();
 });
 
 app.on('before-quit', () => {
@@ -141,7 +147,11 @@ function createTray() {
     tray = new Tray(trayIcon);
     tray.setToolTip('TaxOne Desktop');
     updateTrayMenu('disconnected');
+    tray.on('click', () => showMigrationTool());
     tray.on('double-click', () => showMigrationTool());
+    tray.on('right-click', () => {
+        if (trayMenu) tray.popUpContextMenu(trayMenu);
+    });
 }
 
 function updateTrayMenu(status) {
@@ -201,7 +211,7 @@ function updateTrayMenu(status) {
         { label: 'Quit TaxOne Desktop', click: () => app.quit() },
     ]);
 
-    tray.setContextMenu(menu);
+    trayMenu = menu;
 }
 
 // ─── Windows ──────────────────────────────────────────────────────
@@ -298,6 +308,15 @@ function showMigrationTool() {
 
     migrationWindow.setMenuBarVisibility(false);
     migrationWindow.loadFile(path.join(__dirname, 'renderer', 'migration.html'));
+    migrationWindow.on('close', () => {
+        if (!appStore.get('hasClosedUploadWindow')) {
+            appStore.set('hasClosedUploadWindow', true);
+            new Notification({
+                title: 'TaxOne Desktop',
+                body: 'The app is still running in the system tray. Right-click the tray icon for options.',
+            }).show();
+        }
+    });
     migrationWindow.on('closed', () => { migrationWindow = null; });
 }
 
