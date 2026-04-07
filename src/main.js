@@ -98,7 +98,7 @@ function updateTrayMenu(status) {
         },
         { label: 'Settings...', click: () => showSettings() },
         { type: 'separator' },
-        { label: 'File Migration Tool', click: () => showMigrationTool() },
+        { label: 'File Upload', click: () => showMigrationTool() },
         { type: 'separator' },
         {
             label: 'Sign Out',
@@ -196,7 +196,7 @@ function showMigrationTool() {
         height: 680,
         minWidth: 700,
         minHeight: 500,
-        title: 'TaxOne — File Migration',
+        title: 'TaxOne — File Upload',
         icon: path.join(__dirname, '..', 'assets', 'icon.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload-migration.js'),

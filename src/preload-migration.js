@@ -60,6 +60,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         getFiles: () => ipcRenderer.invoke('migration:get-files'),
         getHistory: () => ipcRenderer.invoke('migration:get-history'),
         selectFolder: () => ipcRenderer.invoke('migration:select-folder'),
+        getFolders: (clientId, parentId) => ipcRenderer.invoke('clients:folders', clientId, parentId),
+        getLastClient: () => ipcRenderer.invoke('migration:get-last-client'),
+        setLastClient: (client) => ipcRenderer.invoke('migration:set-last-client', client),
         getPathForFile: (file) => webUtils.getPathForFile(file),
         getServerUrl: () => ipcRenderer.invoke('get-server-url'),
         onProgress: (callback) => {

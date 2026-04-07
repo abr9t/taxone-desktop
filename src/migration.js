@@ -1,7 +1,7 @@
 /**
- * migration.js — File Migration Tool queue engine
+ * migration.js — File Upload queue engine
  *
- * Manages a persistent queue of files for bulk migration from Canopy → TaxOne.
+ * Manages a persistent queue of files for upload to TaxOne.
  * Queue is saved to disk via electron-store and survives restarts.
  *
  * Lifecycle: scan folder → match clients → enqueue → upload (concurrent) → done
@@ -276,7 +276,7 @@ class MigrationQueue {
     /**
      * Enqueue files for upload after client matching is confirmed.
      *
-     * @param {Array<{clientId, clientName, folderName, files: Array<{relativePath, absolutePath, size}>}>} mappings
+     * @param {Array<{clientId, clientName, folderName, files: Array<{relativePath, absolutePath, size}>, overrideFolderPath?: string}>} mappings
      */
     enqueue(mappings) {
         for (const mapping of mappings) {
@@ -285,6 +285,10 @@ class MigrationQueue {
                 if (this._files.some(e => e.absolutePath === file.absolutePath)) continue;
 
                 const isOversized = file.oversized === true;
+                // Use overrideFolderPath if provided (e.g. from folder picker on loose files)
+                const folderPath = mapping.overrideFolderPath != null
+                    ? mapping.overrideFolderPath
+                    : path.dirname(file.relativePath).replace(/\\/g, '/');
                 this._files.push({
                     id: randomUUID(),
                     absolutePath: file.absolutePath,
@@ -293,9 +297,7 @@ class MigrationQueue {
                     clientId: mapping.clientId,
                     clientName: mapping.clientName,
                     folderName: mapping.folderName,
-                    // folder_path sent to API: the subfolder portion within the client folder
-                    // e.g. if relativePath is "2024/Tax Returns/1040.pdf", folderPath = "2024/Tax Returns"
-                    folderPath: path.dirname(file.relativePath).replace(/\\/g, '/'),
+                    folderPath,
                     filename: path.basename(file.relativePath),
                     status: isOversized ? FILE_STATUS.SKIPPED : FILE_STATUS.PENDING,
                     retries: 0,
@@ -308,6 +310,14 @@ class MigrationQueue {
 
         this.flushSave();
         this.onProgress(this.getStats());
+    }
+
+    getLastClient() {
+        return this.store.get('lastClient', null);
+    }
+
+    setLastClient(client) {
+        this.store.set('lastClient', client);
     }
 
     // ── Queue Control ────────────────────────────────────────────────────

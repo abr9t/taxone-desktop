@@ -1,5 +1,5 @@
 /**
- * migration-ipc.js — IPC handler registration for file migration
+ * migration-ipc.js — IPC handler registration for file upload
  *
  * Usage in main.js:
  *   const { registerMigrationIPC } = require('./migration-ipc');
@@ -107,11 +107,19 @@ function registerMigrationIPC(queue, getWindow, uploader) {
         queue.flushSave();
     });
 
+    ipcMain.handle('migration:get-last-client', async () => {
+        return queue.getLastClient();
+    });
+
+    ipcMain.handle('migration:set-last-client', async (_event, client) => {
+        queue.setLastClient(client);
+    });
+
     ipcMain.handle('migration:select-folder', async () => {
         const win = getWindow() || BrowserWindow.getFocusedWindow();
         const result = await dialog.showOpenDialog(win, {
             properties: ['openDirectory'],
-            title: 'Select Canopy Export Folder',
+            title: 'Select Folder',
         });
         if (result.canceled || result.filePaths.length === 0) return null;
         return result.filePaths[0];

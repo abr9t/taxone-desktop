@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
-    <title>TaxOne — File Migration</title>
+    <title>TaxOne — File Upload</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
@@ -271,6 +271,86 @@
             text-align: center;
         }
 
+        /* ── Folder Picker Popover ──────────────────────── */
+        .folder-picker { position: relative; display: inline-block; }
+        .folder-picker-btn {
+            background: none;
+            border: 1px solid var(--gray-300);
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 12px;
+            cursor: pointer;
+            color: var(--gray-600);
+            white-space: nowrap;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .folder-picker-btn:hover { border-color: var(--amber); background: #fffbeb; }
+        .folder-picker-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .folder-picker-btn:disabled:hover { border-color: var(--gray-300); background: none; }
+        .folder-popover {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            width: 260px;
+            background: white;
+            border: 1px solid var(--gray-300);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+            z-index: 60;
+            margin-top: 2px;
+        }
+        .folder-popover.open { display: block; }
+        .folder-popover-breadcrumb {
+            padding: 6px 10px;
+            font-size: 11px;
+            color: var(--gray-500);
+            border-bottom: 1px solid var(--gray-100);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .folder-popover-breadcrumb a {
+            color: var(--amber);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .folder-popover-breadcrumb a:hover { text-decoration: underline; }
+        .folder-popover-list {
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .folder-popover-item {
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .folder-popover-item:hover { background: var(--gray-100); }
+        .folder-popover-empty {
+            padding: 12px 10px;
+            font-size: 11px;
+            color: var(--gray-400);
+            text-align: center;
+        }
+        .folder-popover-actions {
+            padding: 6px 10px;
+            border-top: 1px solid var(--gray-100);
+            display: flex;
+            gap: 6px;
+        }
+        .folder-popover-loading {
+            padding: 12px 10px;
+            text-align: center;
+            font-size: 11px;
+            color: var(--gray-400);
+        }
+
         .match-actions { display: flex; gap: 8px; padding: 12px 20px; background: white; border-top: 1px solid var(--gray-200); }
 
         /* ── File List ──────────────────────────────────── */
@@ -396,6 +476,23 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* ── Full-window drop overlay ────────────────────── */
+        .drop-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.92);
+            z-index: 200;
+            border: 3px dashed var(--amber);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        .drop-overlay.active { display: flex; }
+        .drop-overlay .drop-overlay-icon { font-size: 48px; margin-bottom: 8px; }
+        .drop-overlay .drop-overlay-text { font-size: 16px; color: var(--gray-600); font-weight: 500; }
+
         /* ── Retry flash ──────────────────────────────────── */
         @keyframes retryFlash {
             0% { background: #fef3c7; }
@@ -408,8 +505,8 @@
 
 <div class="header">
     <div>
-        <h1>📂 File Migration Tool</h1>
-        <div class="subtitle">Bulk import files from Canopy into TaxOne</div>
+        <h1>📂 File Upload</h1>
+        <div class="subtitle">Upload files to TaxOne</div>
     </div>
 </div>
 
@@ -450,6 +547,7 @@
                             <th>Folder Name</th>
                             <th>Match</th>
                             <th>TaxOne Client</th>
+                            <th>Folder</th>
                             <th>Files</th>
                         </tr>
                     </thead>
@@ -532,6 +630,12 @@
     </div>
 </div>
 
+<!-- Full-window drop overlay -->
+<div class="drop-overlay" id="dropOverlay">
+    <div class="drop-overlay-icon">📁</div>
+    <div class="drop-overlay-text">Drop files here</div>
+</div>
+
 <!-- Scanning overlay -->
 <div class="scanning-overlay" id="scanningOverlay">
     <div class="spinner"></div>
@@ -564,19 +668,44 @@ function switchTab(tab) {
     if (tab === 'history') refreshHistory();
 }
 
-// ── Drop Zone ──────────────────────────────────────────────────────────
+// ── Drop Zone (compact bar + full-window overlay) ─────────────────────
 
 const dropZone = document.getElementById('dropZone');
+const dropOverlay = document.getElementById('dropOverlay');
+let dragCounter = 0;
 
+// Compact bar visual feedback
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.stopPropagation();
     dropZone.classList.add('dragover');
 });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', async (e) => {
+
+// Full-window drag listeners (dragenter counter pattern)
+document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    if (dragCounter === 1) dropOverlay.classList.add('active');
+});
+document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+});
+document.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) {
+        dragCounter = 0;
+        dropOverlay.classList.remove('active');
+    }
+});
+
+// Shared drop handler — works from both compact bar and full-window
+async function handleDrop(e) {
     e.preventDefault();
     e.stopPropagation();
+    dragCounter = 0;
+    dropOverlay.classList.remove('active');
     dropZone.classList.remove('dragover');
 
     const items = e.dataTransfer.items;
@@ -604,7 +733,10 @@ dropZone.addEventListener('drop', async (e) => {
     }
     if (folderPaths.length > 0) await scanAndAppend(folderPaths);
     if (filePaths.length > 0) await scanAndAppendFiles(filePaths);
-});
+}
+
+dropZone.addEventListener('drop', handleDrop);
+document.addEventListener('drop', handleDrop);
 
 async function selectFolder() {
     const folderPath = await api.selectFolder();
@@ -671,6 +803,13 @@ async function scanAndAppendFiles(filePaths) {
             allClients = await api.getClients();
         }
 
+        // Check for last used client
+        const lastClient = await api.getLastClient();
+        let prefilledClient = null;
+        if (lastClient && allClients.some(c => c.id === lastClient.id)) {
+            prefilledClient = lastClient;
+        }
+
         // Each drop creates a separate row — never merge into existing
         const files = looseGroup.files;
         let rowName;
@@ -682,13 +821,15 @@ async function scanAndAppendFiles(filePaths) {
 
         importRows.push({
             folderName: rowName,
-            matchType: 'unmatched',
-            client: null,
+            matchType: prefilledClient ? 'manual' : 'unmatched',
+            client: prefilledClient,
             candidates: [],
             files: files,
-            checked: false,
+            checked: !!prefilledClient,
             queued: false,
             isLoose: true,
+            folderPath: null,
+            folderId: null,
         });
 
         renderImportTable();
@@ -752,6 +893,22 @@ function renderImportTable() {
             tdClient.appendChild(createClientPicker(i, row.client));
         }
         tr.appendChild(tdClient);
+
+        // Folder picker (loose files only)
+        const tdFolderPick = document.createElement('td');
+        if (row.isLoose && !row.queued) {
+            tdFolderPick.appendChild(createFolderPicker(i));
+        } else if (row.isLoose && row.queued) {
+            tdFolderPick.textContent = row.folderPath || '/ (root)';
+            tdFolderPick.style.fontSize = '12px';
+            tdFolderPick.style.color = 'var(--gray-500)';
+        } else {
+            tdFolderPick.textContent = '—';
+            tdFolderPick.style.fontSize = '12px';
+            tdFolderPick.style.color = 'var(--gray-400)';
+            tdFolderPick.title = 'Folder structure preserved from source';
+        }
+        tr.appendChild(tdFolderPick);
 
         // File count (with oversized indicator)
         const tdFiles = document.createElement('td');
@@ -922,6 +1079,143 @@ function createClientPicker(rowIndex, selectedClient) {
     return wrapper;
 }
 
+// ── Folder Picker (for loose file rows) ───────────────────────────────
+
+function createFolderPicker(rowIndex) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'folder-picker';
+
+    const btn = document.createElement('button');
+    btn.className = 'folder-picker-btn';
+    btn.textContent = importRows[rowIndex].folderPath || '📁 / (root)';
+    btn.title = importRows[rowIndex].client ? 'Choose destination folder' : 'Select a client first';
+    btn.disabled = !importRows[rowIndex].client;
+
+    const popover = document.createElement('div');
+    popover.className = 'folder-popover';
+
+    wrapper.appendChild(btn);
+    wrapper.appendChild(popover);
+
+    let currentParentId = null;
+    let breadcrumb = [];
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!importRows[rowIndex].client) return;
+        // Close any other open folder popovers
+        document.querySelectorAll('.folder-popover.open').forEach(p => {
+            if (p !== popover) p.classList.remove('open');
+        });
+        if (popover.classList.contains('open')) {
+            popover.classList.remove('open');
+        } else {
+            currentParentId = null;
+            breadcrumb = [];
+            popover.classList.add('open');
+            loadFolders();
+        }
+    });
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+        if (!wrapper.contains(e.target)) {
+            popover.classList.remove('open');
+        }
+    });
+
+    async function loadFolders() {
+        popover.innerHTML = '<div class="folder-popover-loading">Loading folders...</div>';
+        try {
+            const result = await api.getFolders(importRows[rowIndex].client.id, currentParentId);
+            const folders = result.folders || [];
+            if (result.breadcrumb) breadcrumb = result.breadcrumb;
+            renderPopover(folders);
+        } catch {
+            popover.innerHTML = '<div class="folder-popover-empty">Failed to load folders</div>';
+        }
+    }
+
+    function renderPopover(folders) {
+        popover.innerHTML = '';
+
+        // Breadcrumb
+        const crumbDiv = document.createElement('div');
+        crumbDiv.className = 'folder-popover-breadcrumb';
+        const rootLink = document.createElement('a');
+        rootLink.textContent = '/';
+        rootLink.onclick = () => { currentParentId = null; breadcrumb = []; loadFolders(); };
+        crumbDiv.appendChild(rootLink);
+        for (const crumb of breadcrumb) {
+            const sep = document.createTextNode(' › ');
+            crumbDiv.appendChild(sep);
+            const link = document.createElement('a');
+            link.textContent = crumb.name;
+            link.onclick = () => { currentParentId = crumb.id; loadFolders(); };
+            crumbDiv.appendChild(link);
+        }
+        popover.appendChild(crumbDiv);
+
+        // Folder list
+        const listDiv = document.createElement('div');
+        listDiv.className = 'folder-popover-list';
+
+        if (folders.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'folder-popover-empty';
+            empty.textContent = 'No subfolders';
+            listDiv.appendChild(empty);
+        } else {
+            for (const folder of folders) {
+                const item = document.createElement('div');
+                item.className = 'folder-popover-item';
+                item.innerHTML = '📁';
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = folder.name;
+                item.appendChild(nameSpan);
+                item.onclick = () => { currentParentId = folder.id; loadFolders(); };
+                listDiv.appendChild(item);
+            }
+        }
+        popover.appendChild(listDiv);
+
+        // Actions
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'folder-popover-actions';
+
+        const selectBtn = document.createElement('button');
+        selectBtn.className = 'btn btn-sm btn-amber';
+        const currentPath = breadcrumb.length > 0
+            ? breadcrumb.map(c => c.name).join('/')
+            : '';
+        selectBtn.textContent = breadcrumb.length > 0 ? 'Select this folder' : 'Use root (/)';
+        selectBtn.onclick = () => {
+            importRows[rowIndex].folderPath = currentPath || null;
+            importRows[rowIndex].folderId = currentParentId;
+            btn.textContent = currentPath ? '📁 ' + currentPath : '📁 / (root)';
+            popover.classList.remove('open');
+        };
+        actionsDiv.appendChild(selectBtn);
+
+        if (importRows[rowIndex].folderPath) {
+            const clearBtn = document.createElement('button');
+            clearBtn.className = 'btn btn-sm btn-outline';
+            clearBtn.textContent = 'Reset to root';
+            clearBtn.onclick = () => {
+                importRows[rowIndex].folderPath = null;
+                importRows[rowIndex].folderId = null;
+                btn.textContent = '📁 / (root)';
+                popover.classList.remove('open');
+            };
+            actionsDiv.appendChild(clearBtn);
+        }
+
+        popover.appendChild(actionsDiv);
+    }
+
+    return wrapper;
+}
+
 // ── Check/Uncheck helpers ─────────────────────────────────────────────
 
 function checkAll() {
@@ -983,12 +1277,21 @@ async function enqueueMatched() {
         if (row.queued || !row.checked || !row.client) continue;
 
         const isLoose = row.isLoose === true;
-        mappings.push({
+        const mapping = {
             clientId: row.client.id,
             clientName: row.client.name,
             folderName: isLoose ? '' : row.folderName,
             files: row.files,
-        });
+        };
+        if (isLoose && row.folderPath) {
+            mapping.overrideFolderPath = row.folderPath;
+        }
+        mappings.push(mapping);
+
+        // Save last client for loose file rows
+        if (isLoose && row.client) {
+            api.setLastClient({ id: row.client.id, name: row.client.name });
+        }
 
         // Mark as queued
         row.queued = true;
