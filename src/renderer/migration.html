@@ -135,6 +135,20 @@
         .btn-sm { padding: 4px 10px; font-size: 12px; }
         .btn-link { background: none; border: none; color: var(--amber); cursor: pointer; font-size: 12px; padding: 2px 4px; }
         .btn-link:hover { text-decoration: underline; }
+        .btn-remove {
+            background: none;
+            border: none;
+            color: var(--gray-400);
+            font-size: 16px;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+            line-height: 1;
+        }
+        .btn-remove:hover {
+            color: var(--red);
+            background: #fef2f2;
+        }
 
         /* ── Progress Bar ───────────────────────────────── */
         .progress-section {
@@ -546,6 +560,7 @@
                 <button class="btn btn-sm btn-outline" onclick="checkAll()">Check All</button>
                 <button class="btn btn-sm btn-outline" onclick="uncheckUnmatched()">Uncheck Unmatched</button>
                 <button class="btn btn-sm btn-outline" onclick="clearQueued()">Clear Queued</button>
+                <button class="btn btn-sm btn-outline" onclick="clearUnchecked()">Clear Unchecked</button>
                 <button class="btn btn-sm btn-outline" onclick="clearAll()">Clear All</button>
             </div>
             <div class="matching-section" id="matchingSection" style="display:none;">
@@ -558,6 +573,7 @@
                             <th>Client</th>
                             <th>Folder</th>
                             <th>Files</th>
+                            <th style="width:30px;"></th>
                         </tr>
                     </thead>
                     <tbody id="matchBody"></tbody>
@@ -954,6 +970,18 @@ function renderImportTable() {
         tdFiles.textContent = fileCountText;
         tr.appendChild(tdFiles);
 
+        // Remove button (not for queued rows)
+        const tdRemove = document.createElement('td');
+        if (!row.queued) {
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'btn-remove';
+            removeBtn.title = 'Remove';
+            removeBtn.textContent = '\u00d7';
+            removeBtn.onclick = () => removeImportRow(i);
+            tdRemove.appendChild(removeBtn);
+        }
+        tr.appendChild(tdRemove);
+
         body.appendChild(tr);
     }
 
@@ -1303,6 +1331,20 @@ function clearAll() {
     importRows = [];
     renderImportTable();
     saveImportRows();
+}
+
+function removeImportRow(index) {
+    importRows.splice(index, 1);
+    saveImportRows();
+    renderImportTable();
+    updateMatchSummary();
+}
+
+function clearUnchecked() {
+    importRows = importRows.filter(r => r.checked || r.queued);
+    saveImportRows();
+    renderImportTable();
+    updateMatchSummary();
 }
 
 function updateMatchSummary() {

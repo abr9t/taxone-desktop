@@ -98,24 +98,23 @@ function updateTrayMenu(status) {
     const menu = Menu.buildFromTemplate([
         { label: 'TaxOne Desktop', enabled: false },
         { type: 'separator' },
-        { label: statusLabel, enabled: false },
-        { type: 'separator' },
         {
-            label: '📂 File Upload',
+            label: '⬆ File Upload',
             click: () => showMigrationTool(),
         },
         { type: 'separator' },
+        { label: 'WATCH FOLDER', enabled: false },
+        { label: statusLabel, enabled: false },
         ...(watchPath ? [
-            { label: 'WATCH FOLDER', enabled: false },
             { label: `📁 ${watchPath}`, enabled: false },
             {
                 label: 'Open Watch Folder',
                 enabled: !!watchPath,
-                click: () => { if (watchPath) shell.openPath(watchPath); },
+                click: () => { if (watchPath) shell.openPath(watchPath); }
             },
-            ...(queueCount > 0 ? [{ label: `📋 ${queueCount} file(s) pending`, enabled: false }] : []),
-            { type: 'separator' },
         ] : []),
+        ...(queueCount > 0 ? [{ label: `📋 ${queueCount} file(s) pending`, enabled: false }] : []),
+        { type: 'separator' },
         { label: 'Settings...', click: () => showSettings() },
         { type: 'separator' },
         {
