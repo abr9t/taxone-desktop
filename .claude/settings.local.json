@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(identify assets/icon.png)",
+      "Bash(python -c \"from PIL import Image; img=Image.open\\('assets/icon.png'\\); print\\(f'{img.size[0]}x{img.size[1]}'\\)\")",
+      "Bash(powershell -Command \"[System.Drawing.Image]::FromFile\\(\\(Resolve-Path 'assets/icon.png'\\)\\).Width, [System.Drawing.Image]::FromFile\\(\\(Resolve-Path 'assets/icon.png'\\)\\).Height\")"
+    ]
+  }
+}

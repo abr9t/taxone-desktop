@@ -1,20 +1,25 @@
 appId: com.taxone.desktop
 productName: TaxOne Desktop
+
 directories:
   output: dist
-win:
-  target:
-    - nsis
-  icon: assets/icon.ico
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
-  shortcutName: "TaxOne Desktop"
-  installerIcon: assets/icon.ico
-  uninstallerIcon: assets/icon.ico
+
 files:
   - src/**/*
   - assets/**/*
+  - node_modules/**/*
   - package.json
+
+win:
+  target: nsis
+  icon: assets/icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: TaxOne Desktop
+  installerIcon: assets/icon.png
+  uninstallerIcon: assets/icon.png
+  installerHeaderIcon: assets/icon.png

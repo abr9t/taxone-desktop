@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development electron .",
-    "build": "electron-builder",
+    "build": "electron-builder --win",
+    "build:dir": "electron-builder --win --dir",
     "build:win": "electron-builder --win"
   },
   "author": "TaxOne LLC",
