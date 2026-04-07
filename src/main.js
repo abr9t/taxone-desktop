@@ -169,7 +169,7 @@ function showSettings() {
         settingsWindow.focus();
         return;
     }
-    settingsWindow = createWindow('settings.html', { width: 520, height: 640, resizable: true });
+    settingsWindow = createWindow('settings.html', { width: 520, height: 720, resizable: true, minHeight: 600 });
     settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
@@ -365,6 +365,10 @@ ipcMain.handle('settings:save', async (_, { watchPath, moveAfterUpload }) => {
     } catch (err) {
         return { success: false, error: err.message };
     }
+});
+
+ipcMain.handle('settings:show-login', async () => {
+    showLogin();
 });
 
 ipcMain.handle('settings:get-auto-launch', async () => {

@@ -11,6 +11,7 @@
 const { ipcMain, dialog, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const auth = require('./auth');
 const { MAX_FILE_SIZE } = require('./migration');
 
 /**
@@ -19,6 +20,11 @@ const { MAX_FILE_SIZE } = require('./migration');
  * @param {object} uploader - the existing uploader.js module instance
  */
 function registerMigrationIPC(queue, getWindow, uploader) {
+
+    ipcMain.handle('migration:is-authenticated', async () => {
+        const token = await auth.getToken();
+        return !!token;
+    });
 
     ipcMain.handle('migration:scan-folders', async (_event, folderPaths) => {
         const clientFolders = folderPaths.map(p => queue.scanClientFolder(p));

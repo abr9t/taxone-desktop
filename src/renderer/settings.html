@@ -79,6 +79,12 @@
             color: #22c55e; font-size: 13px; font-weight: 500;
             display: none;
         }
+        .btn-link {
+            background: none; border: none; color: #94a3b8;
+            cursor: pointer; font-size: 12px; padding: 2px 8px;
+            -webkit-app-region: no-drag;
+        }
+        .btn-link:hover { color: #e2e8f0; text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -86,9 +92,19 @@
 
     <div class="section">
         <div class="section-title">Connection</div>
-        <div class="status" id="status">
-            <span class="dot dot-gray" id="statusDot"></span>
-            <span id="statusText">Checking...</span>
+        <div id="connectedState" style="display:none;">
+            <div class="status">
+                <span class="dot dot-green"></span>
+                <span>Connected to <span id="serverUrlText"></span></span>
+            </div>
+            <button onclick="signOut()" class="btn-link" style="margin-top:6px;">Sign Out</button>
+        </div>
+        <div id="disconnectedState" style="display:none;">
+            <div class="status">
+                <span class="dot dot-gray"></span>
+                <span>Not connected</span>
+            </div>
+            <button onclick="signIn()" class="btn btn-primary" style="margin-top:8px;">Sign In</button>
         </div>
     </div>
 
@@ -135,8 +151,6 @@
         const moveCheckbox = document.getElementById('moveAfterUpload');
         const saveBtn = document.getElementById('saveBtn');
         const savedLabel = document.getElementById('saved');
-        const statusDot = document.getElementById('statusDot');
-        const statusText = document.getElementById('statusText');
 
         const autoLaunchCheckbox = document.getElementById('autoLaunch');
 
@@ -144,6 +158,16 @@
         autoLaunchCheckbox.addEventListener('change', async () => {
             await window.taxone.setAutoLaunch(autoLaunchCheckbox.checked);
         });
+
+        function signIn() {
+            window.taxone.showLogin();
+        }
+
+        async function signOut() {
+            await window.taxone.login({ serverUrl: '', token: '' }).catch(() => {});
+            document.getElementById('connectedState').style.display = 'none';
+            document.getElementById('disconnectedState').style.display = '';
+        }
 
         // Load current settings
         (async () => {
@@ -153,11 +177,12 @@
             autoLaunchCheckbox.checked = await window.taxone.getAutoLaunch();
 
             if (settings.hasToken) {
-                statusDot.className = 'dot dot-green';
-                statusText.textContent = `Connected to ${settings.serverUrl || 'TaxOne'}`;
+                document.getElementById('connectedState').style.display = '';
+                document.getElementById('disconnectedState').style.display = 'none';
+                document.getElementById('serverUrlText').textContent = settings.serverUrl || 'TaxOne';
             } else {
-                statusDot.className = 'dot dot-gray';
-                statusText.textContent = 'Not connected';
+                document.getElementById('connectedState').style.display = 'none';
+                document.getElementById('disconnectedState').style.display = '';
             }
         })();
 

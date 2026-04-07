@@ -434,6 +434,23 @@
             padding: 2px 20px 6px 50px;
             background: #fef2f2;
         }
+        .file-skip-reason {
+            font-size: 11px;
+            color: var(--gray-500);
+            padding: 2px 20px 6px 50px;
+            background: var(--gray-50);
+        }
+
+        .auth-overlay {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            color: var(--gray-500);
+            gap: 8px;
+            font-size: 13px;
+        }
 
         /* ── History ────────────────────────────────────── */
         .history-list { flex: 1; overflow: auto; padding: 10px 20px; }
@@ -569,6 +586,11 @@
 <div class="content">
     <!-- ═══ IMPORT TAB ═══ -->
     <div class="panel active" id="panel-import">
+        <!-- Auth overlay — shown when not signed in -->
+        <div class="auth-overlay" id="authOverlay" style="display:none;">
+            <div style="font-size:24px;">🔒</div>
+            <div>Not signed in. Please sign in from the system tray to use File Upload.</div>
+        </div>
         <!-- Compact drop zone — always visible at top -->
         <div class="drop-zone-compact" id="dropZone">
             <div class="dz-text">📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); selectFolder();">Browse</button></div>
@@ -1410,6 +1432,12 @@ function updateMatchSummary() {
 // ── Enqueue ────────────────────────────────────────────────────────────
 
 async function enqueueMatched() {
+    const authed = await api.isAuthenticated();
+    if (!authed) {
+        alert('Please sign in first.');
+        return;
+    }
+
     const mappings = [];
 
     for (let i = 0; i < importRows.length; i++) {
@@ -1536,6 +1564,8 @@ function renderFileRow(f) {
 
     if (f.status === 'failed' && f.error) {
         row += `<div class="file-error">${escHtml(f.error)}</div>`;
+    } else if (f.status === 'skipped' && f.error) {
+        row += `<div class="file-skip-reason">${escHtml(f.error)}</div>`;
     }
 
     return row;
@@ -1664,10 +1694,10 @@ api.onFileUpdate((file) => {
         el.replaceWith(newRow);
         // If there was an error row after, remove & re-add
         const nextSib = newRow.nextElementSibling;
-        if (nextSib && nextSib.classList.contains('file-error')) {
+        if (nextSib && (nextSib.classList.contains('file-error') || nextSib.classList.contains('file-skip-reason'))) {
             nextSib.remove();
         }
-        if (file.status === 'failed' && file.error) {
+        if ((file.status === 'failed' || file.status === 'skipped') && file.error) {
             const errorDiv = temp.children[0]; // second child if exists
             if (errorDiv) newRow.after(errorDiv);
         }
@@ -1731,6 +1761,15 @@ function escHtml(str) {
 // ── Init ───────────────────────────────────────────────────────────────
 
 async function init() {
+    // Auth check — show overlay if not signed in
+    const authed = await api.isAuthenticated();
+    if (!authed) {
+        document.getElementById('authOverlay').style.display = '';
+        document.getElementById('dropZone').style.display = 'none';
+        document.getElementById('importMatchArea').style.display = 'none';
+        return;
+    }
+
     const stats = await api.getStats();
     updateProgressUI(stats);
 
