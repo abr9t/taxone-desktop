@@ -44,6 +44,20 @@ app.on('second-instance', (event, commandLine) => {
 async function handleAuthUrl(url) {
     try {
         const parsed = new URL(url);
+
+        if (parsed.hostname === 'connect') {
+            const serverUrl = parsed.searchParams.get('url');
+            if (serverUrl) {
+                await auth.saveServerUrl(serverUrl);
+            }
+            showLogin();
+            if (loginWindow && !loginWindow.isDestroyed()) {
+                loginWindow.focus();
+            }
+            return;
+        }
+
+        // Default: auth handler (taxone-desktop://auth?token=X&url=Y)
         const token = parsed.searchParams.get('token');
         const serverUrl = parsed.searchParams.get('url');
 
@@ -163,20 +177,27 @@ function updateTrayMenu(status) {
         { type: 'separator' },
         { label: 'Settings...', click: () => showSettings() },
         { type: 'separator' },
-        {
-            label: 'Sign Out',
-            click: async () => {
-                watcher.stop();
-                await auth.clearToken();
-                updateTrayMenu('disconnected');
-
-                if (migrationWindow && !migrationWindow.isDestroyed()) {
-                    migrationWindow.webContents.send('migration:auth-changed', false);
-                }
-
-                showLogin();
+        ...(status === 'disconnected' ? [
+            {
+                label: 'Sign In',
+                click: () => showLogin(),
             },
-        },
+        ] : [
+            {
+                label: 'Sign Out',
+                click: async () => {
+                    watcher.stop();
+                    await auth.clearToken();
+                    updateTrayMenu('disconnected');
+
+                    if (migrationWindow && !migrationWindow.isDestroyed()) {
+                        migrationWindow.webContents.send('migration:auth-changed', false);
+                    }
+
+                    showLogin();
+                },
+            },
+        ]),
         { label: 'Quit TaxOne Desktop', click: () => app.quit() },
     ]);
 
@@ -525,6 +546,11 @@ ipcMain.handle('queue:state', async () => {
         total: pendingFiles.length,
         current: pendingFiles[0] || null,
     };
+});
+
+// Server URL (for pre-filling login)
+ipcMain.handle('get-server-url', async () => {
+    return auth.getServerUrl();
 });
 
 // Open external URL (for browser sign-in)

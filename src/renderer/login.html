@@ -233,6 +233,14 @@
         const browserSignInBtn = document.getElementById('browserSignInBtn');
         const tokenSubmitBtn = document.getElementById('tokenSubmitBtn');
 
+        async function init() {
+            const serverUrl = await window.taxone.getServerUrl();
+            if (serverUrl) {
+                document.getElementById('serverUrl').value = serverUrl;
+            }
+        }
+        init();
+
         function showError(msg) {
             errorEl.textContent = msg;
             errorEl.style.display = 'block';
