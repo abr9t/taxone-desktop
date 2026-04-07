@@ -1,5 +1,6 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, Notification } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const auth = require('./auth');
 const watcher = require('./watcher');
 const uploader = require('./uploader');
@@ -7,6 +8,14 @@ const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
 const Store = require('electron-store');
 const appStore = new Store();
+
+// Debug log to file (Windows Electron doesn't pipe to terminal)
+const _debugLog = path.join(__dirname, '..', 'debug.log');
+function debugLog(...args) {
+    const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`;
+    fs.appendFileSync(_debugLog, line);
+    console.log(...args);
+}
 
 let tray = null;
 let trayMenu = null;
@@ -51,9 +60,15 @@ async function handleAuthUrl(url) {
             if (serverUrl) {
                 await auth.saveServerUrl(serverUrl);
             }
-            showLogin();
-            if (loginWindow && !loginWindow.isDestroyed()) {
-                loginWindow.focus();
+            const token = await auth.getToken();
+            if (token) {
+                // Already signed in — just open File Upload
+                showMigrationTool();
+            } else {
+                showLogin();
+                if (loginWindow && !loginWindow.isDestroyed()) {
+                    loginWindow.focus();
+                }
             }
             return;
         }
@@ -106,13 +121,21 @@ app.whenReady().then(async () => {
     createTray();
 
     const token = await auth.getToken();
+    const serverUrl = auth.getServerUrl();
+    debugLog('[startup] token exists:', !!token);
+    debugLog('[startup] serverUrl:', serverUrl);
+    debugLog('[startup] userData:', app.getPath('userData'));
     if (!token) {
+        debugLog('[startup] no token — showing login');
         showLogin();
     } else {
-        const valid = await uploader.verifyToken();
-        if (!valid) {
+        const result = await uploader.verifyToken();
+        debugLog('[startup] verifyToken result:', result);
+        if (result === 'auth_error') {
             showLogin();
         } else {
+            // 'ok' or 'network_error' — proceed with cached credentials
+            uploader.configure(serverUrl, token);
             startWatching();
             initMigrationQueue();
             showMigrationTool();
@@ -370,7 +393,7 @@ function initMigrationQueue() {
         if (stats.failed > 0 && stats.queueStatus === 'idle') {
             try {
                 const isOnline = await uploader.verifyToken();
-                if (isOnline) {
+                if (isOnline === 'ok') {
                     migrationQueue.retryAllFailed();
                 }
             } catch {

@@ -43,10 +43,15 @@ async function verifyToken() {
     try {
         const client = await getClient();
         const res = await client.get('/api/desktop/clients', { params: { search: '', limit: 1 } });
-        return res.status === 200;
-    } catch {
+        return res.status === 200 ? 'ok' : 'auth_error';
+    } catch (err) {
+        const status = err.response?.status;
+        console.error('[verifyToken] failed:', status || err.code || err.message);
         apiClient = null;
-        return false;
+        // 401/403 = token is invalid → must re-login
+        if (status === 401 || status === 403) return 'auth_error';
+        // Network/SSL/timeout = server unreachable → don't force re-login
+        return 'network_error';
     }
 }
 

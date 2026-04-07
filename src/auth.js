@@ -26,15 +26,15 @@ async function getToken() {
 }
 
 async function saveToken(token) {
+    // Always save to electron-store as fallback
+    store.set('_token', token);
     if (keytar) {
         try {
             await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, token);
-            return;
         } catch {
-            // Fall through to store
+            // keytar failed — token is still in electron-store
         }
     }
-    store.set('_token', token);
 }
 
 async function clearToken() {

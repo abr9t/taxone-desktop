@@ -5,7 +5,17 @@
       "Bash(python -c \"from PIL import Image; img=Image.open\\('assets/icon.png'\\); print\\(f'{img.size[0]}x{img.size[1]}'\\)\")",
       "Bash(powershell -Command \"[System.Drawing.Image]::FromFile\\(\\(Resolve-Path 'assets/icon.png'\\)\\).Width, [System.Drawing.Image]::FromFile\\(\\(Resolve-Path 'assets/icon.png'\\)\\).Height\")",
       "Bash(ls -d ../taxone*/resources/views/pages/settings/)",
-      "Bash(ls -d ../*/resources/views/pages/settings/)"
+      "Bash(ls -d ../*/resources/views/pages/settings/)",
+      "Bash(node -e \"try { const k = require\\('keytar'\\); console.log\\('keytar loaded:', typeof k\\); } catch\\(e\\) { console.log\\('keytar NOT available:', e.message\\); }\")",
+      "Bash(node -e ':*)",
+      "Bash(node -e \"const pkg = require\\('./package.json'\\); console.log\\('name:', pkg.name\\); console.log\\('productName:', pkg.productName || 'not set'\\);\")",
+      "Bash(timeout 8 npx electron .)",
+      "Bash(tee /tmp/electron-log.txt)",
+      "Read(//tmp/**)",
+      "Bash(tasklist)",
+      "Bash(npx which:*)",
+      "Bash(ls node_modules/.bin/electron*)",
+      "Bash(taskkill //F //IM electron.exe)"
     ]
   }
 }
