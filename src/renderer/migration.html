@@ -115,9 +115,14 @@
             justify-content: center;
             gap: 12px;
         }
-        .drop-zone-compact:hover, .drop-zone-compact.dragover {
+        .drop-zone-compact:hover:not(.disabled), .drop-zone-compact.dragover:not(.disabled) {
             border-color: var(--amber);
             background: #fffbeb;
+        }
+        .drop-zone-compact.disabled {
+            opacity: 0.6;
+            cursor: default;
+            border-style: solid;
         }
         .drop-zone-compact .dz-text { font-size: 13px; color: var(--gray-600); }
         .drop-zone-compact .dz-text strong { color: var(--gray-800); }
@@ -441,17 +446,6 @@
             background: var(--gray-50);
         }
 
-        .auth-overlay {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            flex: 1;
-            color: var(--gray-500);
-            gap: 8px;
-            font-size: 13px;
-        }
-
         /* ── History ────────────────────────────────────── */
         .history-list { flex: 1; overflow: auto; padding: 10px 20px; }
         .history-row {
@@ -586,14 +580,9 @@
 <div class="content">
     <!-- ═══ IMPORT TAB ═══ -->
     <div class="panel active" id="panel-import">
-        <!-- Auth overlay — shown when not signed in -->
-        <div class="auth-overlay" id="authOverlay" style="display:none;">
-            <div style="font-size:24px;">🔒</div>
-            <div>Not signed in. Please sign in from the system tray to use File Upload.</div>
-        </div>
         <!-- Compact drop zone — always visible at top -->
         <div class="drop-zone-compact" id="dropZone">
-            <div class="dz-text">📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); selectFolder();">Browse</button></div>
+            <div class="dz-text" id="dropZoneText">📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" id="browseBtn" onclick="event.stopPropagation(); selectFolder();">Browse</button></div>
         </div>
 
         <!-- Match table — persistent, grows as you add folders -->
@@ -738,6 +727,7 @@ let currentTab = 'import';
 let currentFilter = 'all';
 let allFiles = [];           // cached file list
 let allClients = [];         // from TaxOne API
+let isAuthed = false;
 
 // Persistent import staging state
 // Each entry: { folderName, matchType, client, candidates, files, queued }
@@ -798,6 +788,11 @@ async function handleDrop(e) {
     dropOverlay.classList.remove('active');
     dropZone.classList.remove('dragover');
 
+    if (!isAuthed) {
+        alert('Please sign in first.');
+        return;
+    }
+
     const items = e.dataTransfer.items;
     const folderPaths = [];
     const filePaths = [];
@@ -829,6 +824,10 @@ dropZone.addEventListener('drop', handleDrop);
 document.addEventListener('drop', handleDrop);
 
 async function selectFolder() {
+    if (!isAuthed) {
+        alert('Please sign in first.');
+        return;
+    }
     const folderPath = await api.selectFolder();
     if (!folderPath) return;
     await scanAndAppend([folderPath]);
@@ -1426,7 +1425,7 @@ function updateMatchSummary() {
         `Matched ${matched} of ${total} clients`;
     document.getElementById('enqueueInfo').textContent =
         `${queuedFiles.toLocaleString()} files from ${queuedClients} clients will be queued (${skippedFiles.toLocaleString()} skipped)`;
-    document.getElementById('btnEnqueue').disabled = queuedClients === 0;
+    document.getElementById('btnEnqueue').disabled = queuedClients === 0 || !isAuthed;
 }
 
 // ── Enqueue ────────────────────────────────────────────────────────────
@@ -1758,17 +1757,57 @@ function escHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── Auth UI ───────────────────────────────────────────────────────────
+
+function updateAuthUI() {
+    try {
+        const dropZoneEl = document.getElementById('dropZone');
+        const dropZoneText = document.getElementById('dropZoneText');
+        const btnEnqueue = document.getElementById('btnEnqueue');
+
+        console.log('[migration] updateAuthUI called, isAuthed =', isAuthed);
+
+        if (isAuthed) {
+            if (dropZoneEl) {
+                dropZoneEl.classList.remove('disabled');
+            }
+            if (dropZoneText) {
+                dropZoneText.innerHTML = '📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); selectFolder();">Browse</button>';
+            }
+            if (btnEnqueue) btnEnqueue.disabled = false;
+
+            // Load clients if not already loaded
+            if (allClients.length === 0) {
+                api.getClients().then(c => { allClients = c; }).catch(() => {});
+            }
+        } else {
+            if (dropZoneEl) {
+                dropZoneEl.classList.add('disabled');
+            }
+            if (dropZoneText) {
+                dropZoneText.innerHTML = '🔒 <strong>Sign in to upload files</strong>';
+            }
+            if (btnEnqueue) btnEnqueue.disabled = true;
+        }
+    } catch (err) {
+        console.error('[migration] updateAuthUI error:', err);
+    }
+}
+
+api.onAuthChanged((authed) => {
+    console.log('[migration] onAuthChanged fired, authed =', authed);
+    isAuthed = authed;
+    if (!authed) {
+        allClients = [];
+    }
+    updateAuthUI();
+});
+
 // ── Init ───────────────────────────────────────────────────────────────
 
 async function init() {
-    // Auth check — show overlay if not signed in
-    const authed = await api.isAuthenticated();
-    if (!authed) {
-        document.getElementById('authOverlay').style.display = '';
-        document.getElementById('dropZone').style.display = 'none';
-        document.getElementById('importMatchArea').style.display = 'none';
-        return;
-    }
+    isAuthed = await api.isAuthenticated();
+    updateAuthUI();
 
     const stats = await api.getStats();
     updateProgressUI(stats);
@@ -1785,8 +1824,7 @@ async function init() {
     const savedRows = await api.getImportRows();
     if (savedRows && savedRows.length > 0) {
         importRows = savedRows;
-        // Need allClients loaded for client pickers to work
-        if (allClients.length === 0) {
+        if (allClients.length === 0 && isAuthed) {
             try { allClients = await api.getClients(); } catch { /* will load on next scan */ }
         }
         renderImportTable();

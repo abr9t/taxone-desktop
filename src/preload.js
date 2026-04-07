@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('taxone', {
     // Auth
     login: (data) => ipcRenderer.invoke('auth:login', data),
+    signOut: () => ipcRenderer.invoke('auth:sign-out'),
 
     // Settings
     getSettings: () => ipcRenderer.invoke('settings:get'),

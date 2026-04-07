@@ -75,5 +75,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         onFileUpdate: (callback) => {
             ipcRenderer.on('migration:file-update', (_event, file) => callback(file));
         },
+        onAuthChanged: (callback) => {
+            ipcRenderer.on('migration:auth-changed', (_event, authed) => callback(authed));
+        },
     },
 });

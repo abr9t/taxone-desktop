@@ -81,7 +81,7 @@ function createTray() {
     tray = new Tray(trayIcon);
     tray.setToolTip('TaxOne Desktop');
     updateTrayMenu('disconnected');
-    tray.on('double-click', () => showSettings());
+    tray.on('double-click', () => showMigrationTool());
 }
 
 function updateTrayMenu(status) {
@@ -123,6 +123,11 @@ function updateTrayMenu(status) {
                 watcher.stop();
                 await auth.clearToken();
                 updateTrayMenu('disconnected');
+
+                if (migrationWindow && !migrationWindow.isDestroyed()) {
+                    migrationWindow.webContents.send('migration:auth-changed', false);
+                }
+
                 showLogin();
             },
         },
@@ -339,6 +344,11 @@ ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
 
         startWatching();
         initMigrationQueue();
+
+        if (migrationWindow && !migrationWindow.isDestroyed()) {
+            migrationWindow.webContents.send('migration:auth-changed', true);
+        }
+
         return { success: true };
     } catch (err) {
         return { success: false, error: err.message };
@@ -365,6 +375,19 @@ ipcMain.handle('settings:save', async (_, { watchPath, moveAfterUpload }) => {
     } catch (err) {
         return { success: false, error: err.message };
     }
+});
+
+ipcMain.handle('auth:sign-out', async () => {
+    watcher.stop();
+    await auth.clearToken();
+    updateTrayMenu('disconnected');
+
+    if (migrationWindow && !migrationWindow.isDestroyed()) {
+        migrationWindow.webContents.send('migration:auth-changed', false);
+    }
+
+    showLogin();
+    return { success: true };
 });
 
 ipcMain.handle('settings:show-login', async () => {

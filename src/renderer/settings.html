@@ -164,7 +164,7 @@
         }
 
         async function signOut() {
-            await window.taxone.login({ serverUrl: '', token: '' }).catch(() => {});
+            await window.taxone.signOut();
             document.getElementById('connectedState').style.display = 'none';
             document.getElementById('disconnectedState').style.display = '';
         }
