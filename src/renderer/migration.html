@@ -79,6 +79,18 @@
             margin-left: 6px;
         }
         .tab.active .badge { background: #fef3c7; color: var(--amber-hover); }
+        .queue-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 4px;
+            vertical-align: middle;
+            background: var(--gray-300);
+        }
+        .queue-dot-running { background: var(--green); }
+        .queue-dot-paused { background: var(--amber); }
+        .queue-dot-idle { background: var(--gray-300); }
 
         /* ── Content ────────────────────────────────────── */
         .content {
@@ -546,7 +558,8 @@
         Import
     </div>
     <div class="tab" data-tab="queue" onclick="switchTab('queue')">
-        Queue <span class="badge" id="queueBadge">0</span>
+        Queue <span id="queueDot" class="queue-dot"></span>
+        <span class="badge" id="queueBadge">0</span>
     </div>
     <div class="tab" data-tab="history" onclick="switchTab('history')">
         History <span class="badge" id="historyBadge">0</span>
@@ -1619,6 +1632,9 @@ function updateProgressUI(stats) {
 
     document.getElementById('queueBadge').textContent =
         (stats.pending + stats.uploading).toLocaleString();
+
+    const dot = document.getElementById('queueDot');
+    dot.className = 'queue-dot queue-dot-' + stats.queueStatus;
 
     // Button state
     const isRunning = stats.queueStatus === 'running';
