@@ -91,6 +91,47 @@
             text-align: center;
             line-height: 1.5;
         }
+        .success-state {
+            display: none;
+            text-align: center;
+            width: 100%;
+        }
+        .success-check {
+            width: 64px;
+            height: 64px;
+            background: #22c55e;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: white;
+            margin: 0 auto 16px;
+        }
+        .success-msg {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .success-url {
+            font-size: 13px;
+            color: #94a3b8;
+            margin-bottom: 20px;
+        }
+        .success-close {
+            padding: 8px 24px;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: transparent;
+            color: #94a3b8;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s;
+            -webkit-app-region: no-drag;
+        }
+        .success-close:hover {
+            background: #334155;
+        }
     </style>
 </head>
 <body>
@@ -111,6 +152,13 @@
 
         <button type="submit" id="submitBtn">Connect</button>
     </form>
+
+    <div class="success-state" id="successState">
+        <div class="success-check">&#10003;</div>
+        <div class="success-msg">Connected to TaxOne</div>
+        <div class="success-url" id="successUrl"></div>
+        <button class="success-close" onclick="window.close()">Close</button>
+    </div>
 
     <p class="help">
         Need help? Open TaxOne in your browser and go to<br>
@@ -134,7 +182,11 @@
             const result = await window.taxone.login({ serverUrl, token });
 
             if (result.success) {
-                // Window closes automatically on success (main.js handles it)
+                document.getElementById('loginForm').style.display = 'none';
+                document.querySelector('.help').style.display = 'none';
+                document.getElementById('successUrl').textContent = serverUrl;
+                document.getElementById('successState').style.display = 'block';
+                setTimeout(() => window.close(), 2000);
             } else {
                 errorEl.textContent = result.error;
                 errorEl.style.display = 'block';

@@ -289,65 +289,73 @@
         .folder-picker-btn:hover { border-color: var(--amber); background: #fffbeb; }
         .folder-picker-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .folder-picker-btn:disabled:hover { border-color: var(--gray-300); background: none; }
-        .folder-popover {
-            display: none;
-            position: absolute;
-            top: 100%;
-            left: 0;
-            width: 260px;
-            background: white;
-            border: 1px solid var(--gray-300);
-            border-radius: 6px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-            z-index: 60;
-            margin-top: 2px;
+        .folder-modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 300;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        .folder-popover.open { display: block; }
-        .folder-popover-breadcrumb {
-            padding: 6px 10px;
-            font-size: 11px;
+        .folder-modal {
+            background: white;
+            border-radius: 8px;
+            width: 380px;
+            max-height: 400px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+        }
+        .folder-modal-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .folder-modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+        .folder-modal-footer {
+            padding: 12px 16px;
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .folder-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+        .folder-item:hover {
+            background: var(--gray-100);
+        }
+        .folder-breadcrumb {
+            padding: 8px 16px;
+            font-size: 12px;
             color: var(--gray-500);
             border-bottom: 1px solid var(--gray-100);
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            flex-wrap: wrap;
         }
-        .folder-popover-breadcrumb a {
+        .folder-breadcrumb span {
+            cursor: pointer;
             color: var(--amber);
-            cursor: pointer;
-            text-decoration: none;
         }
-        .folder-popover-breadcrumb a:hover { text-decoration: underline; }
-        .folder-popover-list {
-            max-height: 180px;
-            overflow-y: auto;
+        .folder-breadcrumb span:hover {
+            text-decoration: underline;
         }
-        .folder-popover-item {
-            padding: 6px 10px;
+        .folder-modal-loading {
+            padding: 16px;
+            text-align: center;
             font-size: 12px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .folder-popover-item:hover { background: var(--gray-100); }
-        .folder-popover-empty {
-            padding: 12px 10px;
-            font-size: 11px;
-            color: var(--gray-400);
-            text-align: center;
-        }
-        .folder-popover-actions {
-            padding: 6px 10px;
-            border-top: 1px solid var(--gray-100);
-            display: flex;
-            gap: 6px;
-        }
-        .folder-popover-loading {
-            padding: 12px 10px;
-            text-align: center;
-            font-size: 11px;
             color: var(--gray-400);
         }
 
@@ -538,6 +546,7 @@
                 <button class="btn btn-sm btn-outline" onclick="checkAll()">Check All</button>
                 <button class="btn btn-sm btn-outline" onclick="uncheckUnmatched()">Uncheck Unmatched</button>
                 <button class="btn btn-sm btn-outline" onclick="clearQueued()">Clear Queued</button>
+                <button class="btn btn-sm btn-outline" onclick="clearAll()">Clear All</button>
             </div>
             <div class="matching-section" id="matchingSection" style="display:none;">
                 <table class="match-table">
@@ -643,6 +652,23 @@
     <div id="scanningDetail" style="font-size:11px; color:var(--gray-400);"></div>
 </div>
 
+<!-- Folder picker modal -->
+<div class="folder-modal-backdrop" id="folderModalBackdrop" style="display:none;" onclick="if(event.target===this)closeFolderModal()">
+    <div class="folder-modal">
+        <div class="folder-modal-header">
+            <span id="folderModalTitle">Select folder</span>
+            <button style="background:none; border:none; cursor:pointer; font-size:18px; color:var(--gray-400); line-height:1;" onclick="closeFolderModal()">&times;</button>
+        </div>
+        <div class="folder-breadcrumb" id="folderModalBreadcrumb"><span>/</span></div>
+        <div class="folder-modal-body" id="folderModalBody"></div>
+        <div class="folder-modal-footer">
+            <button class="btn btn-sm btn-outline" onclick="selectRootFolderModal()">Use root folder</button>
+            <button class="btn btn-sm btn-amber" id="folderModalSelectBtn" onclick="selectFolderModal()">Select this folder</button>
+            <button class="btn btn-sm btn-outline" onclick="closeFolderModal()">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const api = window.electronAPI.migration;
 
@@ -656,6 +682,10 @@ let allClients = [];         // from TaxOne API
 // Persistent import staging state
 // Each entry: { folderName, matchType, client, candidates, files, queued }
 let importRows = [];
+
+function saveImportRows() {
+    api.setImportRows(importRows);
+}
 
 // ── Tabs ───────────────────────────────────────────────────────────────
 
@@ -784,6 +814,7 @@ async function scanAndAppend(folderPaths) {
         }
 
         renderImportTable();
+        saveImportRows();
     } catch (err) {
         alert('Error scanning folder: ' + err.message);
     } finally {
@@ -833,6 +864,7 @@ async function scanAndAppendFiles(filePaths) {
         });
 
         renderImportTable();
+        saveImportRows();
     } catch (err) {
         alert('Error scanning files: ' + err.message);
     } finally {
@@ -869,6 +901,7 @@ function renderImportTable() {
             cb.onchange = () => {
                 importRows[i].checked = cb.checked;
                 updateMatchSummary();
+                saveImportRows();
             };
             tdCheck.appendChild(cb);
         }
@@ -903,7 +936,7 @@ function renderImportTable() {
             tdFolderPick.style.fontSize = '12px';
             tdFolderPick.style.color = 'var(--gray-500)';
         } else {
-            tdFolderPick.textContent = '—';
+            tdFolderPick.textContent = 'Preserved';
             tdFolderPick.style.fontSize = '12px';
             tdFolderPick.style.color = 'var(--gray-400)';
             tdFolderPick.title = 'Folder structure preserved from source';
@@ -984,13 +1017,15 @@ function createClientPicker(rowIndex, selectedClient) {
     function selectClient(client) {
         importRows[rowIndex].client = client;
         importRows[rowIndex].matchType = 'manual';
+        importRows[rowIndex].checked = true;
         input.value = client.name;
         input.classList.add('has-value');
         wrapper.classList.add('has-selection');
         closeDropdown();
-        // Enable folder picker button in same row
         const tr = wrapper.closest('tr');
         if (tr) {
+            const checkbox = tr.querySelector('input[type="checkbox"]');
+            if (checkbox) checkbox.checked = true;
             const folderBtn = tr.querySelector('.folder-picker-btn');
             if (folderBtn) {
                 folderBtn.disabled = false;
@@ -998,6 +1033,7 @@ function createClientPicker(rowIndex, selectedClient) {
             }
         }
         updateMatchSummary();
+        saveImportRows();
     }
 
     function clearSelection() {
@@ -1016,6 +1052,7 @@ function createClientPicker(rowIndex, selectedClient) {
             }
         }
         updateMatchSummary();
+        saveImportRows();
     }
 
     function openDropdown() {
@@ -1097,7 +1134,11 @@ function createClientPicker(rowIndex, selectedClient) {
     return wrapper;
 }
 
-// ── Folder Picker (for loose file rows) ───────────────────────────────
+// ── Folder Picker (modal) ─────────────────────────────────────────────
+
+let folderModalRowIndex = null;
+let folderModalParentId = null;
+let folderModalBreadcrumb = [];
 
 function createFolderPicker(rowIndex) {
     const wrapper = document.createElement('div');
@@ -1105,133 +1146,126 @@ function createFolderPicker(rowIndex) {
 
     const btn = document.createElement('button');
     btn.className = 'folder-picker-btn';
-    btn.textContent = importRows[rowIndex].folderPath || '📁 / (root)';
+    btn.id = 'folder-btn-' + rowIndex;
+    btn.textContent = importRows[rowIndex].folderPath ? '📁 ' + importRows[rowIndex].folderPath : '📁 / (root)';
     btn.title = importRows[rowIndex].client ? 'Choose destination folder' : 'Select a client first';
     btn.disabled = !importRows[rowIndex].client;
-
-    const popover = document.createElement('div');
-    popover.className = 'folder-popover';
-
-    wrapper.appendChild(btn);
-    wrapper.appendChild(popover);
-
-    let currentParentId = null;
-    let breadcrumb = [];
 
     btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (!importRows[rowIndex].client) return;
-        // Close any other open folder popovers
-        document.querySelectorAll('.folder-popover.open').forEach(p => {
-            if (p !== popover) p.classList.remove('open');
-        });
-        if (popover.classList.contains('open')) {
-            popover.classList.remove('open');
-        } else {
-            currentParentId = null;
-            breadcrumb = [];
-            popover.classList.add('open');
-            loadFolders();
-        }
+        openFolderModal(rowIndex);
     });
 
-    // Close on outside click
-    document.addEventListener('click', (e) => {
-        if (!wrapper.contains(e.target)) {
-            popover.classList.remove('open');
-        }
-    });
-
-    async function loadFolders() {
-        popover.innerHTML = '<div class="folder-popover-loading">Loading folders...</div>';
-        try {
-            const result = await api.getFolders(importRows[rowIndex].client.id, currentParentId);
-            const folders = result.folders || [];
-            if (result.breadcrumb) breadcrumb = result.breadcrumb;
-            renderPopover(folders);
-        } catch {
-            popover.innerHTML = '<div class="folder-popover-empty">Failed to load folders</div>';
-        }
-    }
-
-    function renderPopover(folders) {
-        popover.innerHTML = '';
-
-        // Breadcrumb
-        const crumbDiv = document.createElement('div');
-        crumbDiv.className = 'folder-popover-breadcrumb';
-        const rootLink = document.createElement('a');
-        rootLink.textContent = '/';
-        rootLink.onclick = () => { currentParentId = null; breadcrumb = []; loadFolders(); };
-        crumbDiv.appendChild(rootLink);
-        for (const crumb of breadcrumb) {
-            const sep = document.createTextNode(' › ');
-            crumbDiv.appendChild(sep);
-            const link = document.createElement('a');
-            link.textContent = crumb.name;
-            link.onclick = () => { currentParentId = crumb.id; loadFolders(); };
-            crumbDiv.appendChild(link);
-        }
-        popover.appendChild(crumbDiv);
-
-        // Folder list
-        const listDiv = document.createElement('div');
-        listDiv.className = 'folder-popover-list';
-
-        if (folders.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'folder-popover-empty';
-            empty.textContent = 'No subfolders';
-            listDiv.appendChild(empty);
-        } else {
-            for (const folder of folders) {
-                const item = document.createElement('div');
-                item.className = 'folder-popover-item';
-                item.innerHTML = '📁';
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = folder.name;
-                item.appendChild(nameSpan);
-                item.onclick = () => { currentParentId = folder.id; loadFolders(); };
-                listDiv.appendChild(item);
-            }
-        }
-        popover.appendChild(listDiv);
-
-        // Actions
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = 'folder-popover-actions';
-
-        const selectBtn = document.createElement('button');
-        selectBtn.className = 'btn btn-sm btn-amber';
-        const currentPath = breadcrumb.length > 0
-            ? breadcrumb.map(c => c.name).join('/')
-            : '';
-        selectBtn.textContent = breadcrumb.length > 0 ? 'Select this folder' : 'Use root (/)';
-        selectBtn.onclick = () => {
-            importRows[rowIndex].folderPath = currentPath || null;
-            importRows[rowIndex].folderId = currentParentId;
-            btn.textContent = currentPath ? '📁 ' + currentPath : '📁 / (root)';
-            popover.classList.remove('open');
-        };
-        actionsDiv.appendChild(selectBtn);
-
-        if (importRows[rowIndex].folderPath) {
-            const clearBtn = document.createElement('button');
-            clearBtn.className = 'btn btn-sm btn-outline';
-            clearBtn.textContent = 'Reset to root';
-            clearBtn.onclick = () => {
-                importRows[rowIndex].folderPath = null;
-                importRows[rowIndex].folderId = null;
-                btn.textContent = '📁 / (root)';
-                popover.classList.remove('open');
-            };
-            actionsDiv.appendChild(clearBtn);
-        }
-
-        popover.appendChild(actionsDiv);
-    }
-
+    wrapper.appendChild(btn);
     return wrapper;
+}
+
+function openFolderModal(rowIndex) {
+    folderModalRowIndex = rowIndex;
+    folderModalParentId = null;
+    folderModalBreadcrumb = [];
+
+    const row = importRows[rowIndex];
+    document.getElementById('folderModalTitle').textContent =
+        'Select folder for ' + (row.client ? row.client.name : '');
+    document.getElementById('folderModalBackdrop').style.display = 'flex';
+    loadModalFolders();
+}
+
+function closeFolderModal() {
+    document.getElementById('folderModalBackdrop').style.display = 'none';
+    folderModalRowIndex = null;
+}
+
+async function loadModalFolders() {
+    const row = importRows[folderModalRowIndex];
+    const body = document.getElementById('folderModalBody');
+    body.innerHTML = '<div class="folder-modal-loading">Loading folders...</div>';
+
+    try {
+        const result = await api.getFolders(row.client.id, folderModalParentId);
+        const folders = result.folders || [];
+        if (result.breadcrumb) folderModalBreadcrumb = result.breadcrumb;
+        renderModalFolders(folders);
+    } catch {
+        body.innerHTML = '<div class="folder-modal-loading">Failed to load folders</div>';
+    }
+}
+
+function renderModalFolders(folders) {
+    // Breadcrumb
+    const crumbEl = document.getElementById('folderModalBreadcrumb');
+    let crumbHtml = '<span onclick="navigateFolderModal(null)">/</span>';
+    for (const c of folderModalBreadcrumb) {
+        crumbHtml += ' &#x203A; <span onclick="navigateFolderModal(' + c.id + ')">' + escHtml(c.name) + '</span>';
+    }
+    crumbEl.innerHTML = crumbHtml;
+
+    // Folder list
+    const body = document.getElementById('folderModalBody');
+    let html = '';
+
+    // Back entry when not at root
+    if (folderModalParentId !== null) {
+        const parentOfCurrent = folderModalBreadcrumb.length >= 2
+            ? folderModalBreadcrumb[folderModalBreadcrumb.length - 2].id
+            : null;
+        html += '<div class="folder-item" onclick="navigateFolderModal(' + parentOfCurrent + ')">' +
+            '<span>&#x2190;</span> <span>..</span></div>';
+    }
+
+    if (folders.length === 0 && folderModalParentId === null) {
+        html += '<div class="folder-modal-loading">No folders</div>';
+    }
+
+    for (const folder of folders) {
+        html += '<div class="folder-item" onclick="navigateFolderModal(' + folder.id + ')">' +
+            '<span>📁</span> <span>' + escHtml(folder.name) + '</span></div>';
+    }
+
+    body.innerHTML = html;
+
+    // Update select button text
+    const selectBtn = document.getElementById('folderModalSelectBtn');
+    if (folderModalBreadcrumb.length > 0) {
+        selectBtn.textContent = 'Select \u201C' + folderModalBreadcrumb[folderModalBreadcrumb.length - 1].name + '\u201D';
+    } else {
+        selectBtn.textContent = 'Use root folder';
+    }
+}
+
+function navigateFolderModal(folderId) {
+    folderModalParentId = folderId;
+    loadModalFolders();
+}
+
+function selectFolderModal() {
+    const rowIndex = folderModalRowIndex;
+    const currentPath = folderModalBreadcrumb.length > 0
+        ? folderModalBreadcrumb.map(c => c.name).join('/')
+        : null;
+
+    importRows[rowIndex].folderPath = currentPath;
+    importRows[rowIndex].folderId = folderModalParentId;
+
+    const btn = document.getElementById('folder-btn-' + rowIndex);
+    if (btn) btn.textContent = currentPath ? '📁 ' + currentPath : '📁 / (root)';
+
+    closeFolderModal();
+    saveImportRows();
+}
+
+function selectRootFolderModal() {
+    const rowIndex = folderModalRowIndex;
+    importRows[rowIndex].folderPath = null;
+    importRows[rowIndex].folderId = null;
+
+    const btn = document.getElementById('folder-btn-' + rowIndex);
+    if (btn) btn.textContent = '📁 / (root)';
+
+    closeFolderModal();
+    saveImportRows();
 }
 
 // ── Check/Uncheck helpers ─────────────────────────────────────────────
@@ -1242,6 +1276,7 @@ function checkAll() {
     }
     document.querySelectorAll('#matchBody input[type="checkbox"]').forEach(cb => { cb.checked = true; });
     updateMatchSummary();
+    saveImportRows();
 }
 
 function uncheckUnmatched() {
@@ -1253,11 +1288,19 @@ function uncheckUnmatched() {
         }
     }
     updateMatchSummary();
+    saveImportRows();
 }
 
 function clearQueued() {
     importRows = importRows.filter(r => !r.queued);
     renderImportTable();
+    saveImportRows();
+}
+
+function clearAll() {
+    importRows = [];
+    renderImportTable();
+    saveImportRows();
 }
 
 function updateMatchSummary() {
@@ -1319,6 +1362,7 @@ async function enqueueMatched() {
     if (mappings.length === 0) return;
 
     await api.enqueue(mappings);
+    saveImportRows();
     renderImportTable(); // re-render to show queued state
 }
 
@@ -1478,6 +1522,8 @@ async function skipFile(fileId) {
 
 async function retryAllFailed() {
     await api.retryAllFailed();
+    setFilter('all');
+    await refreshFileList();
 }
 
 async function clearFiltered() {
@@ -1621,6 +1667,17 @@ async function init() {
 
     const history = await api.getHistory();
     document.getElementById('historyBadge').textContent = history.length.toLocaleString();
+
+    // Restore persisted import rows
+    const savedRows = await api.getImportRows();
+    if (savedRows && savedRows.length > 0) {
+        importRows = savedRows;
+        // Need allClients loaded for client pickers to work
+        if (allClients.length === 0) {
+            try { allClients = await api.getClients(); } catch { /* will load on next scan */ }
+        }
+        renderImportTable();
+    }
 }
 
 init();

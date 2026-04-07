@@ -79,6 +79,7 @@ class MigrationQueue {
                 files: [],        // Array of file entries
                 status: QUEUE_STATUS.IDLE,
                 history: [],      // Completed upload records (kept separate for perf)
+                importRows: [],   // Persistent import tab staging rows
             },
         });
 
@@ -310,6 +311,14 @@ class MigrationQueue {
 
         this.flushSave();
         this.onProgress(this.getStats());
+    }
+
+    getImportRows() {
+        return this.store.get('importRows', []);
+    }
+
+    setImportRows(rows) {
+        this.store.set('importRows', rows);
     }
 
     getLastClient() {

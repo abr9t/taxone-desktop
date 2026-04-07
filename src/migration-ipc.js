@@ -107,6 +107,14 @@ function registerMigrationIPC(queue, getWindow, uploader) {
         queue.flushSave();
     });
 
+    ipcMain.handle('migration:get-import-rows', async () => {
+        return queue.getImportRows();
+    });
+
+    ipcMain.handle('migration:set-import-rows', async (_event, rows) => {
+        queue.setImportRows(rows);
+    });
+
     ipcMain.handle('migration:get-last-client', async () => {
         return queue.getLastClient();
     });

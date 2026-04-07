@@ -29,6 +29,8 @@ app.on('second-instance', () => {
 
 app.setName('TaxOne Desktop');
 
+app.setAppUserModelId('com.taxone.desktop');
+
 app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock.hide();
 
@@ -90,17 +92,16 @@ function updateTrayMenu(status) {
         { label: 'TaxOne Desktop', enabled: false },
         { type: 'separator' },
         { label: statusLabel, enabled: false },
+        { label: 'File Upload', click: () => showMigrationTool() },
+        { type: 'separator' },
         ...(watchPath ? [{ label: `📁 ${watchPath}`, enabled: false }] : []),
         ...(queueCount > 0 ? [{ label: `📋 ${queueCount} file(s) pending`, enabled: false }] : []),
-        { type: 'separator' },
         {
             label: 'Open Watch Folder',
             enabled: !!watchPath,
             click: () => { if (watchPath) shell.openPath(watchPath); },
         },
         { label: 'Settings...', click: () => showSettings() },
-        { type: 'separator' },
-        { label: 'File Upload', click: () => showMigrationTool() },
         { type: 'separator' },
         {
             label: 'Sign Out',
@@ -154,7 +155,7 @@ function showSettings() {
         settingsWindow.focus();
         return;
     }
-    settingsWindow = createWindow('settings.html', { width: 520, height: 560 });
+    settingsWindow = createWindow('settings.html', { width: 520, height: 640, resizable: true });
     settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
@@ -245,7 +246,7 @@ function initMigrationQueue() {
         },
         onComplete: (stats) => {
             new Notification({
-                title: 'TaxOne — Migration Complete',
+                title: 'TaxOne — Upload Complete',
                 body: `${stats.completed} files uploaded, ${stats.skipped} skipped, ${stats.failed} failed.`,
             }).show();
         },
@@ -320,8 +321,6 @@ ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
         await auth.saveToken(token);
         await auth.saveServerUrl(serverUrl);
         uploader.configure(serverUrl, token);
-
-        if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
 
         startWatching();
         initMigrationQueue();

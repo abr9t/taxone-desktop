@@ -9,6 +9,9 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "TaxOne Desktop"
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
 files:
