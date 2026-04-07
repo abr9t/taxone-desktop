@@ -93,6 +93,11 @@ class MigrationQueue {
         this.activeUploads = 0;
         this._status = this.store.get('status', QUEUE_STATUS.IDLE);
 
+        // Per-batch counters — reset on each start()
+        this._batchCompleted = 0;
+        this._batchSkipped = 0;
+        this._batchFailed = 0;
+
         // In-memory file and history arrays — avoid reading from store on every access
         this._files = this.store.get('files', []);
         this._history = this.store.get('history', []);
@@ -334,6 +339,9 @@ class MigrationQueue {
 
     start() {
         if (this._status === QUEUE_STATUS.RUNNING) return;
+        this._batchCompleted = 0;
+        this._batchSkipped = 0;
+        this._batchFailed = 0;
         this._status = QUEUE_STATUS.RUNNING;
         this.store.set('status', QUEUE_STATUS.RUNNING);
         this._processNext();
@@ -467,7 +475,11 @@ class MigrationQueue {
                 this.store.set('status', QUEUE_STATUS.IDLE);
                 this.flushSave();
                 if (wasRunning) {
-                    this.onComplete(stats);
+                    this.onComplete({
+                        completed: this._batchCompleted,
+                        skipped: this._batchSkipped,
+                        failed: this._batchFailed,
+                    });
                 }
             }
         }
@@ -499,6 +511,7 @@ class MigrationQueue {
                     error: 'Already exists in TaxOne',
                     documentId: result.document_id,
                 });
+                this._batchSkipped++;
                 this.activeUploads--;
                 this._processNext();
                 return;
@@ -510,6 +523,7 @@ class MigrationQueue {
                 documentId: result.document_id,
                 uploadedAt: new Date().toISOString(),
             });
+            this._batchCompleted++;
 
             // Add to history
             this._history.unshift({
@@ -550,6 +564,7 @@ class MigrationQueue {
                 retries,
                 error: err.message || 'Upload failed',
             });
+            this._batchFailed++;
         }
 
         this.activeUploads--;

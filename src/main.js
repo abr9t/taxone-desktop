@@ -74,6 +74,7 @@ async function handleAuthUrl(url) {
 
         startWatching();
         initMigrationQueue();
+        showMigrationTool();
 
         if (migrationWindow && !migrationWindow.isDestroyed()) {
             migrationWindow.webContents.send('migration:auth-changed', true);
