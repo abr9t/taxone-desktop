@@ -27,6 +27,8 @@ app.on('second-instance', () => {
 
 // ─── App Lifecycle ────────────────────────────────────────────────
 
+app.setName('TaxOne Desktop');
+
 app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock.hide();
 

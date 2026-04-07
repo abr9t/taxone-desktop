@@ -546,7 +546,7 @@
                             <th style="width:32px;"></th>
                             <th>Folder Name</th>
                             <th>Match</th>
-                            <th>TaxOne Client</th>
+                            <th>Client</th>
                             <th>Folder</th>
                             <th>Files</th>
                         </tr>
@@ -825,7 +825,7 @@ async function scanAndAppendFiles(filePaths) {
             client: prefilledClient,
             candidates: [],
             files: files,
-            checked: !!prefilledClient,
+            checked: true,
             queued: false,
             isLoose: true,
             folderPath: null,
@@ -988,6 +988,15 @@ function createClientPicker(rowIndex, selectedClient) {
         input.classList.add('has-value');
         wrapper.classList.add('has-selection');
         closeDropdown();
+        // Enable folder picker button in same row
+        const tr = wrapper.closest('tr');
+        if (tr) {
+            const folderBtn = tr.querySelector('.folder-picker-btn');
+            if (folderBtn) {
+                folderBtn.disabled = false;
+                folderBtn.title = 'Choose destination folder';
+            }
+        }
         updateMatchSummary();
     }
 
@@ -997,6 +1006,15 @@ function createClientPicker(rowIndex, selectedClient) {
         input.value = '';
         input.classList.remove('has-value');
         wrapper.classList.remove('has-selection');
+        // Disable folder picker button in same row
+        const tr = wrapper.closest('tr');
+        if (tr) {
+            const folderBtn = tr.querySelector('.folder-picker-btn');
+            if (folderBtn) {
+                folderBtn.disabled = true;
+                folderBtn.title = 'Select a client first';
+            }
+        }
         updateMatchSummary();
     }
 

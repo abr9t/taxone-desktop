@@ -1,5 +1,6 @@
 {
   "name": "taxone-desktop",
+  "productName": "TaxOne Desktop",
   "version": "1.0.0",
   "description": "TaxOne Desktop Companion — watch folder file uploader",
   "main": "src/main.js",
