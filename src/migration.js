@@ -311,6 +311,7 @@ class MigrationQueue {
 
         this.flushSave();
         this.onProgress(this.getStats());
+        this.start();
     }
 
     getImportRows() {
