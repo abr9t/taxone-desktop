@@ -114,6 +114,15 @@
 └── receipt.pdf           ← you pick the client</div>
     </div>
 
+    <div class="section">
+        <div class="section-title">Startup</div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="autoLaunch">
+            <label for="autoLaunch">Start with Windows</label>
+        </div>
+        <p class="info">Automatically launch TaxOne Desktop when you sign in to Windows</p>
+    </div>
+
     <div class="actions">
         <span class="saved" id="saved">✓ Saved</span>
         <button class="btn btn-primary" id="saveBtn">Save</button>
@@ -128,11 +137,19 @@
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
 
+        const autoLaunchCheckbox = document.getElementById('autoLaunch');
+
+        // Auto-launch toggle — saves immediately on change
+        autoLaunchCheckbox.addEventListener('change', async () => {
+            await window.taxone.setAutoLaunch(autoLaunchCheckbox.checked);
+        });
+
         // Load current settings
         (async () => {
             const settings = await window.taxone.getSettings();
             watchPathInput.value = settings.watchPath || '';
             moveCheckbox.checked = settings.moveAfterUpload;
+            autoLaunchCheckbox.checked = await window.taxone.getAutoLaunch();
 
             if (settings.hasToken) {
                 statusDot.className = 'dot dot-green';

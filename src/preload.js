@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('taxone', {
     getSettings: () => ipcRenderer.invoke('settings:get'),
     saveSettings: (data) => ipcRenderer.invoke('settings:save', data),
     browseFolder: () => ipcRenderer.invoke('settings:browse-folder'),
+    getAutoLaunch: () => ipcRenderer.invoke('settings:get-auto-launch'),
+    setAutoLaunch: (enabled) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
 
     // Clients
     searchClients: (query) => ipcRenderer.invoke('clients:search', query),

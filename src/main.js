@@ -352,6 +352,15 @@ ipcMain.handle('settings:save', async (_, { watchPath, moveAfterUpload }) => {
     }
 });
 
+ipcMain.handle('settings:get-auto-launch', async () => {
+    return app.getLoginItemSettings().openAtLogin;
+});
+
+ipcMain.handle('settings:set-auto-launch', async (_event, enabled) => {
+    app.setLoginItemSettings({ openAtLogin: enabled });
+    return { success: true };
+});
+
 ipcMain.handle('settings:browse-folder', async () => {
     const result = await dialog.showOpenDialog({
         properties: ['openDirectory', 'createDirectory'],
