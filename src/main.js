@@ -5,6 +5,8 @@ const watcher = require('./watcher');
 const uploader = require('./uploader');
 const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
+const Store = require('electron-store');
+const appStore = new Store();
 
 let tray = null;
 let loginWindow = null;
@@ -33,6 +35,11 @@ app.setAppUserModelId('com.taxone.desktop');
 
 app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock.hide();
+
+    if (!appStore.get('hasLaunched')) {
+        app.setLoginItemSettings({ openAtLogin: true });
+        appStore.set('hasLaunched', true);
+    }
 
     createTray();
 
@@ -92,15 +99,23 @@ function updateTrayMenu(status) {
         { label: 'TaxOne Desktop', enabled: false },
         { type: 'separator' },
         { label: statusLabel, enabled: false },
-        { label: 'File Upload', click: () => showMigrationTool() },
         { type: 'separator' },
-        ...(watchPath ? [{ label: `📁 ${watchPath}`, enabled: false }] : []),
-        ...(queueCount > 0 ? [{ label: `📋 ${queueCount} file(s) pending`, enabled: false }] : []),
         {
-            label: 'Open Watch Folder',
-            enabled: !!watchPath,
-            click: () => { if (watchPath) shell.openPath(watchPath); },
+            label: '📂 File Upload',
+            click: () => showMigrationTool(),
         },
+        { type: 'separator' },
+        ...(watchPath ? [
+            { label: 'WATCH FOLDER', enabled: false },
+            { label: `📁 ${watchPath}`, enabled: false },
+            {
+                label: 'Open Watch Folder',
+                enabled: !!watchPath,
+                click: () => { if (watchPath) shell.openPath(watchPath); },
+            },
+            ...(queueCount > 0 ? [{ label: `📋 ${queueCount} file(s) pending`, enabled: false }] : []),
+            { type: 'separator' },
+        ] : []),
         { label: 'Settings...', click: () => showSettings() },
         { type: 'separator' },
         {
@@ -196,9 +211,10 @@ function showMigrationTool() {
 
     migrationWindow = new BrowserWindow({
         width: 900,
-        height: 680,
+        height: 700,
         minWidth: 700,
-        minHeight: 500,
+        minHeight: 400,
+        maxHeight: 900,
         title: 'TaxOne — File Upload',
         icon: path.join(__dirname, '..', 'assets', 'icon.png'),
         webPreferences: {

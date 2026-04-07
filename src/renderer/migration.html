@@ -553,7 +553,7 @@
                     <thead>
                         <tr>
                             <th style="width:32px;"></th>
-                            <th>Folder Name</th>
+                            <th>File / Folder</th>
                             <th>Match</th>
                             <th>Client</th>
                             <th>Folder</th>
@@ -907,9 +907,10 @@ function renderImportTable() {
         }
         tr.appendChild(tdCheck);
 
-        // Folder name
+        // File / Folder name
         const tdFolder = document.createElement('td');
-        tdFolder.textContent = row.folderName;
+        const icon = row.isLoose ? '📄' : '📁';
+        tdFolder.textContent = icon + ' ' + row.folderName;
         tr.appendChild(tdFolder);
 
         // Match type badge
@@ -1032,6 +1033,7 @@ function createClientPicker(rowIndex, selectedClient) {
                 folderBtn.title = 'Choose destination folder';
             }
         }
+        api.setLastClient({ id: client.id, name: client.name });
         updateMatchSummary();
         saveImportRows();
     }
@@ -1349,11 +1351,6 @@ async function enqueueMatched() {
         }
         mappings.push(mapping);
 
-        // Save last client for loose file rows
-        if (isLoose && row.client) {
-            api.setLastClient({ id: row.client.id, name: row.client.name });
-        }
-
         // Mark as queued
         row.queued = true;
         row.checked = false;
@@ -1528,11 +1525,8 @@ async function retryAllFailed() {
 
 async function clearFiltered() {
     if (currentFilter === 'all') {
-        if (!confirm('Clear all files from the queue? Completed uploads remain in history.')) return;
         await api.clearQueue();
     } else {
-        const label = currentFilter.charAt(0).toUpperCase() + currentFilter.slice(1);
-        if (!confirm(`Clear all ${currentFilter} files from the queue?`)) return;
         await api.clearByStatus(currentFilter);
     }
     refreshFileList();
