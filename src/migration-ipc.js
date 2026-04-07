@@ -123,6 +123,11 @@ function registerMigrationIPC(queue, getWindow, uploader) {
         queue.setLastClient(client);
     });
 
+    ipcMain.handle('migration:open-path', async (_event, filePath) => {
+        const { shell } = require('electron');
+        return shell.openPath(filePath);
+    });
+
     ipcMain.handle('migration:select-folder', async () => {
         const win = getWindow() || BrowserWindow.getFocusedWindow();
         const result = await dialog.showOpenDialog(win, {

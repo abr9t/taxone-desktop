@@ -386,6 +386,15 @@
             font-size: 12px;
         }
         .file-row:hover { background: var(--gray-100); }
+        .file-link {
+            color: inherit;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .file-link:hover {
+            color: var(--amber);
+            text-decoration: underline;
+        }
         .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .file-client { width: 140px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .file-folder { width: 140px; color: var(--gray-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -826,6 +835,7 @@ async function scanAndAppend(folderPaths) {
                 files: folder.files,
                 checked: m.matchType !== 'unmatched',
                 queued: false,
+                sourcePath: folderPaths[i],
             });
         }
 
@@ -923,10 +933,21 @@ function renderImportTable() {
         }
         tr.appendChild(tdCheck);
 
-        // File / Folder name
+        // File / Folder name (clickable to open)
         const tdFolder = document.createElement('td');
         const icon = row.isLoose ? '📄' : '📁';
-        tdFolder.textContent = icon + ' ' + row.folderName;
+        const openTarget = row.isLoose ? (row.files[0] && row.files[0].absolutePath) : row.sourcePath;
+        if (openTarget) {
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'file-link';
+            link.title = 'Open in Explorer';
+            link.textContent = icon + ' ' + row.folderName;
+            link.onclick = (e) => { e.preventDefault(); api.openPath(openTarget); };
+            tdFolder.appendChild(link);
+        } else {
+            tdFolder.textContent = icon + ' ' + row.folderName;
+        }
         tr.appendChild(tdFolder);
 
         // Match type badge
@@ -1069,6 +1090,7 @@ function createClientPicker(rowIndex, selectedClient) {
     function clearSelection() {
         importRows[rowIndex].client = null;
         importRows[rowIndex].matchType = 'unmatched';
+        api.setLastClient(null);
         input.value = '';
         input.classList.remove('has-value');
         wrapper.classList.remove('has-selection');
