@@ -764,6 +764,7 @@ dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover
 
 // Full-window drag listeners (dragenter counter pattern)
 document.addEventListener('dragenter', (e) => {
+    if (!isAuthed) return;
     e.preventDefault();
     dragCounter++;
     if (dragCounter === 1) dropOverlay.classList.add('active');
@@ -1600,6 +1601,7 @@ async function pauseQueue() {
 }
 
 async function retryFile(fileId) {
+    if (!isAuthed) { alert('Please sign in first.'); return; }
     await api.retryFile(fileId);
 
     // Visual feedback: flash the row and show "retrying..." badge
@@ -1624,6 +1626,7 @@ async function skipFile(fileId) {
 }
 
 async function retryAllFailed() {
+    if (!isAuthed) { alert('Please sign in first.'); return; }
     await api.retryAllFailed();
     setFilter('all');
     await refreshFileList();
@@ -1668,9 +1671,9 @@ function updateProgressUI(stats) {
     // Button state
     const isRunning = stats.queueStatus === 'running';
     document.getElementById('btnStart').style.display = isRunning ? 'none' : '';
-    document.getElementById('btnStart').disabled = (stats.pending === 0);
+    document.getElementById('btnStart').disabled = (stats.pending === 0) || !isAuthed;
     document.getElementById('btnPause').style.display = isRunning ? '' : 'none';
-    document.getElementById('btnRetryAll').disabled = stats.failed === 0;
+    document.getElementById('btnRetryAll').disabled = (stats.failed === 0) || !isAuthed;
     document.getElementById('btnClear').disabled = isRunning;
 }
 
@@ -1764,6 +1767,9 @@ function updateAuthUI() {
         const dropZoneEl = document.getElementById('dropZone');
         const dropZoneText = document.getElementById('dropZoneText');
         const btnEnqueue = document.getElementById('btnEnqueue');
+        const btnStart = document.getElementById('btnStart');
+        const btnRetryAll = document.getElementById('btnRetryAll');
+        const browseBtn = document.getElementById('browseBtn');
 
         console.log('[migration] updateAuthUI called, isAuthed =', isAuthed);
 
@@ -1772,9 +1778,12 @@ function updateAuthUI() {
                 dropZoneEl.classList.remove('disabled');
             }
             if (dropZoneText) {
-                dropZoneText.innerHTML = '📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" onclick="event.stopPropagation(); selectFolder();">Browse</button>';
+                dropZoneText.innerHTML = '📁 <strong>Drop client folders or files here</strong> or <button class="btn btn-sm btn-outline" id="browseBtn" onclick="event.stopPropagation(); selectFolder();">Browse</button>';
             }
             if (btnEnqueue) btnEnqueue.disabled = false;
+            if (btnStart) btnStart.disabled = false;
+            if (btnRetryAll) btnRetryAll.disabled = false;
+            if (browseBtn) browseBtn.disabled = false;
 
             // Load clients if not already loaded
             if (allClients.length === 0) {
@@ -1788,6 +1797,9 @@ function updateAuthUI() {
                 dropZoneText.innerHTML = '🔒 <strong>Sign in to upload files</strong>';
             }
             if (btnEnqueue) btnEnqueue.disabled = true;
+            if (btnStart) btnStart.disabled = true;
+            if (btnRetryAll) btnRetryAll.disabled = true;
+            if (browseBtn) browseBtn.disabled = true;
         }
     } catch (err) {
         console.error('[migration] updateAuthUI error:', err);

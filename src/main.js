@@ -208,6 +208,7 @@ function showConfirmUpload() {
 }
 
 function showMigrationTool() {
+
     if (migrationWindow && !migrationWindow.isDestroyed()) {
         migrationWindow.focus();
         return;
