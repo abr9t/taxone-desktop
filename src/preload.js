@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('taxone', {
     uploadFile: (data) => ipcRenderer.invoke('upload:file', data),
 
     // Queue
+    cancelFile: (filePath) => ipcRenderer.invoke('upload:cancel', { filePath }),
     queueNext: () => ipcRenderer.invoke('queue:next'),
     getQueueState: () => ipcRenderer.invoke('queue:state'),
 

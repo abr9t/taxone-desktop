@@ -234,6 +234,7 @@
     <!-- Bottom bar -->
     <div class="bottom-bar">
         <div class="upload-dest" id="uploadDest"></div>
+        <button class="btn btn-ghost" id="cancelBtn" style="font-size:11px;color:#64748b">Cancel</button>
         <button class="btn btn-ghost" id="skipBtn">Skip</button>
         <button class="btn btn-primary" id="uploadBtn" disabled>Upload</button>
     </div>
@@ -544,6 +545,10 @@
         // ── Next / Skip ─────────────────────────────────
         $('nextBtn').addEventListener('click', () => window.taxone.queueNext());
         $('skipBtn').addEventListener('click', () => window.taxone.queueNext());
+        $('cancelBtn').addEventListener('click', async () => {
+            if (!currentFile) return;
+            await window.taxone.cancelFile(currentFile.filePath);
+        });
 
         // ── Helpers ─────────────────────────────────────
         function esc(str) {

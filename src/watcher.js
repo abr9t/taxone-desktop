@@ -40,12 +40,17 @@ function isInUploadedFolder(filePath) {
     return /\/Uploaded\//i.test(normalized);
 }
 
+function isInCancelledFolder(filePath) {
+    const normalized = filePath.replace(/\\/g, '/');
+    return /\/Cancelled\//i.test(normalized);
+}
+
 /**
  * Parse folder structure to extract client hint and folder hint.
  */
 function parseFileInfo(filePath) {
-    // Skip files in Uploaded folders (Windows backslash-safe)
-    if (isInUploadedFolder(filePath)) {
+    // Skip files in Uploaded/Cancelled folders (Windows backslash-safe)
+    if (isInUploadedFolder(filePath) || isInCancelledFolder(filePath)) {
         return null;
     }
 
@@ -69,7 +74,7 @@ function parseFileInfo(filePath) {
     let folderHint = null;
 
     if (parts.length >= 1) {
-        if (parts[0].toLowerCase() === 'uploaded') return null;
+        if (parts[0].toLowerCase() === 'uploaded' || parts[0].toLowerCase() === 'cancelled') return null;
         clientHint = parts[0];
     }
     if (parts.length >= 2) {
@@ -156,4 +161,29 @@ function moveToUploaded(filePath) {
     }
 }
 
-module.exports = { start, stop, getWatchPath, setWatchPath, getMoveAfterUpload, setMoveAfterUpload, moveToUploaded };
+function moveToCancelled(filePath) {
+    try {
+        const dir = path.dirname(filePath);
+        const cancelledDir = path.join(dir, 'Cancelled');
+
+        if (!fs.existsSync(cancelledDir)) {
+            fs.mkdirSync(cancelledDir, { recursive: true });
+        }
+
+        let finalDest = path.join(cancelledDir, path.basename(filePath));
+        let i = 1;
+        while (fs.existsSync(finalDest)) {
+            const ext = path.extname(filePath);
+            const stem = path.basename(filePath, ext);
+            finalDest = path.join(cancelledDir, `${stem} (${i})${ext}`);
+            i++;
+        }
+
+        fs.renameSync(filePath, finalDest);
+        console.log(`[watcher] Cancelled to: ${finalDest}`);
+    } catch (err) {
+        console.error('[watcher] Failed to cancel file:', err);
+    }
+}
+
+module.exports = { start, stop, getWatchPath, setWatchPath, getMoveAfterUpload, setMoveAfterUpload, moveToUploaded, moveToCancelled };

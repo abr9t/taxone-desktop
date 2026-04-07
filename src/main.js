@@ -455,6 +455,17 @@ ipcMain.handle('upload:file', async (_, { filePath, clientId, folderPath, filena
     }
 });
 
+// Cancel file (move to Cancelled/ and dequeue)
+ipcMain.handle('upload:cancel', async (_, { filePath }) => {
+    try {
+        watcher.moveToCancelled(filePath);
+        dequeueFile();
+        return { success: true };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
 // Next file in queue (after upload success or skip)
 ipcMain.handle('queue:next', async () => {
     dequeueFile();
