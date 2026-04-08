@@ -3,7 +3,7 @@
 Electron companion app for [TaxOne](https://taxone.cpa). Two core features:
 
 1. **Watch Folder** — monitors a local directory and prompts per-file upload to a matched client
-2. **File Upload Tool** — bulk import with drag-and-drop, client matching, persistent queue, concurrent uploads
+2. **File Upload Tool** — bulk import with drag-and-drop, client matching, persistent queue, throttled uploads
 
 CommonJS throughout (no ESM — `electron-store` v8 requirement).
 
@@ -18,12 +18,19 @@ CommonJS throughout (no ESM — `electron-store` v8 requirement).
 | chokidar | ^4.0.0 | File system watcher |
 | axios | ^1.7.0 | HTTP client for TaxOne API |
 | keytar | ^7.9.0 | OS keychain for token storage (fallback: electron-store) |
+| xlsx | ^0.18.5 | Excel export for queue data |
 | form-data | (transitive) | Multipart uploads via axios |
 | electron-builder | ^25.0.0 | Build & packaging (dev) |
 | cross-env | ^7.0.3 | Cross-platform env vars (dev) |
 | png2icons | ^2.0.1 | Icon conversion (dev) |
 
 Node.js built-in `crypto.randomUUID()` for IDs (no `uuid` package — ESM incompatibility).
+
+---
+
+## TLS Configuration
+
+`process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'` is set at the top of `src/main.js` (line 1) to disable TLS certificate verification. This allows connections to servers with self-signed or invalid certificates.
 
 ---
 
@@ -53,12 +60,13 @@ Node.js built-in `crypto.randomUUID()` for IDs (no `uuid` package — ESM incomp
 ```
 
 - **Single-instance lock** — `app.requestSingleInstanceLock()`, second instance either handles `taxone-desktop://` auth URL or opens File Upload window
-- **System tray app** — no dock icon on macOS (`app.dock.hide()`)
+- **System tray app** — no dock icon on macOS (`app.dock.hide()`), single-click tray opens File Upload window
 - **Main process owns all state** — queues, watchers, uploads
 - **Renderer processes are display-only** — communicate via IPC only
 - **`nodeIntegration: false`, `contextIsolation: true`** — separate preloads per window type
 - **App user model ID** — `com.taxone.desktop` (`app.setAppUserModelId`)
-- **First-launch auto-start** — on first run, `app.setLoginItemSettings({ openAtLogin: true })` and `hasLaunched` flag set
+- **First-launch auto-start** — on first run, `app.setLoginItemSettings({ openAtLogin: true })` and `hasLaunched` flag set in `appStore`
+- **App opens File Upload window on start** — `showMigrationTool()` called after successful auth verification
 - **Tray close notification** — first time the File Upload window is closed, a notification says the app is still running in the tray (`hasClosedUploadWindow` flag)
 
 ### Windows
@@ -81,9 +89,10 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 - Sanctum personal access token with `desktop` ability scope
 - Token storage: OS keychain via keytar (`TaxOneDesktop` / `api-token`), falls back to `electron-store` `_token` key
-- Server URL stored in `electron-store` (store name: `taxone-settings`), normalized (trailing slash stripped)
+- Token always saved to both keychain and electron-store (store as fallback)
+- Server URL stored in `electron-store` (store name: `taxone-settings`), normalized (trailing slash stripped, `http://` forced to `https://` for non-localhost/non-`.test` URLs)
 - Token verified on app start via `GET /api/desktop/clients?search=&limit=1`
-  - `'ok'` → proceed with cached credentials
+  - `'ok'` → proceed with cached credentials, open File Upload window
   - `'auth_error'` (401/403) → show login
   - `'network_error'` → proceed anyway (offline-tolerant)
 - Tokens don't expire unless revoked from TaxOne Firm Settings
@@ -91,19 +100,38 @@ File Upload exposes `window.electronAPI.migration` namespace.
 ### Login Methods
 
 **1. Browser OAuth flow (primary):**
-- User enters server URL → clicks "Sign in with Browser" → opens `{serverUrl}/desktop/authorize` in default browser
+- User enters server URL → clicks "Sign in with Browser" → opens `{serverUrl}/desktop/authorize` in default browser via `shell.openExternal()`
 - TaxOne web app authenticates user, then redirects to `taxone-desktop://auth?token=X&url=Y`
-- Custom protocol registered via `app.setAsDefaultProtocolClient('taxone-desktop')`
-- `handleAuthUrl()` parses URL, saves token + server URL, configures uploader, starts watching, opens File Upload window
+- Custom protocol registered via `app.setAsDefaultProtocolClient('taxone-desktop')` (with `process.execPath` arg in dev mode)
+- `handleAuthUrl()` parses URL, saves token + server URL, configures uploader, starts watching, inits migration queue, opens File Upload window
+- Sends `migration:auth-changed` event to File Upload window with `true`
+- Shows "Successfully signed in" OS notification
 
 **2. `taxone-desktop://connect` handler:**
-- Web app can link to `taxone-desktop://connect?url=X` to pre-fill server URL
-- If already signed in, opens File Upload window directly
-- If not signed in, opens login window
+- Web app can link to `taxone-desktop://connect?url=X` to pre-fill server URL via `auth.saveServerUrl()`
+- If already signed in (token exists), opens File Upload window directly
+- If not signed in, opens login window (with server URL pre-filled)
 
 **3. Manual token paste (fallback):**
-- Login window has expandable "Paste token manually" section
-- User enters server URL + token → `uploader.verifyTokenWith()` validates → save to keychain + store
+- Login window has expandable "Paste token manually" section (toggle animation with `max-height` transition)
+- User enters server URL + token → `uploader.verifyTokenWith()` validates (10s timeout) → save to keychain + store
+- On success: shows green checkmark success state, auto-closes window after 2s
+
+**Login window auto-fills server URL** — on init, calls `window.taxone.getServerUrl()` and populates the input field
+
+### Auth State Propagation
+
+- Sign in/sign out from any source (browser OAuth, manual token, tray menu, settings) sends `migration:auth-changed` event to File Upload window
+- File Upload window updates UI: connection status in header, drop zone enabled/disabled, lock icon when not authenticated, queue controls gated
+- Tray menu conditionally shows "Sign In" (when disconnected) or "Sign Out" (when connected)
+
+### Sign Out Flow
+
+1. Stop watcher
+2. Clear token from keychain and electron-store
+3. Update tray menu to disconnected state
+4. Send `migration:auth-changed` with `false` to File Upload window
+5. Show login window
 
 ---
 
@@ -113,7 +141,8 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 - chokidar monitors configurable watch path (default: `~/TaxoneWatch/`)
 - `ignoreInitial: true`, `awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 200 }`, `depth: 5`
-- Ignores: hidden files, `.tmp`, `.crdownload`, `~` suffix, `Uploaded/` and `Cancelled/` subfolders (at any depth)
+- Ignores: hidden files (regex), `.tmp`, `.crdownload`, `~` suffix
+- `parseFileInfo()` also skips files in `Uploaded/` and `Cancelled/` subfolders (at any depth, case-insensitive, backslash-safe)
 - Allowed extensions: `.pdf`, `.jpg`, `.jpeg`, `.png`, `.heic`, `.tiff`, `.gif`, `.webp`, `.xlsx`, `.xls`, `.csv`, `.doc`, `.docx`, `.txt`, `.zip`, `.msg`, `.eml`
 - `parseFileInfo()` extracts `clientHint` (first subfolder) and `folderHint` (remaining path)
 - New files trigger `enqueueFile()` in main.js → opens confirm-upload window
@@ -137,14 +166,20 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 Three-tab interface: **Import**, **Queue**, **History**.
 
+### Header
+
+- Shows "File Upload" title
+- Connection status subtitle: "Connected to {serverUrl}" or "Not connected" — updated via `updateAuthUI()` on init and `migration:auth-changed` events
+
 ### Import Tab
 
 **Drop zone:**
-- Full-window drop target (dragenter counter pattern) + compact bar + Browse button
+- Full-window drop target (dragenter counter pattern) with overlay ("Drop files here") + compact bar + Browse button
 - Accepts folders (each = one client row) and loose files
 - `webkitGetAsEntry()` to distinguish files from folders
 - `webUtils.getPathForFile()` to get absolute paths from dropped files
-- Disabled state with lock icon when not authenticated
+- Disabled state with lock icon and "Sign in to upload files" button when not authenticated
+- Auth guard: drop handler and folder browse check `isAuthed` before proceeding
 
 **Folder scanning (`scanClientFolder` / `_walkDir`):**
 - Recursive directory walk, skips hidden directories
@@ -163,7 +198,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 3. **Unmatched** — no candidates within threshold
 
 **Searchable client dropdown:**
-- Substring filter on `allClients` array (fetched once from API, limit 9999), max 10 results
+- Substring filter on `allClients` array (fetched once from API, limit 2000, `include_all: true`), max 10 results
 - Keyboard navigation (ArrowUp/Down, Enter, Escape)
 - `has-selection` / `has-value` CSS states
 - On selection: sets `matchType: 'manual'`, auto-checks row, enables folder picker
@@ -198,9 +233,13 @@ Three-tab interface: **Import**, **Queue**, **History**.
 - On construct: `_recoverCrashedUploads()` resets any `uploading` files back to `pending`
 - `autoResume()` called after init — starts queue if pending/uploading files exist
 
-**Concurrent uploads:**
-- `concurrency: 3` (configurable), managed via `activeUploads` counter
-- `_processNext()` fills slots up to concurrency limit
+**Upload concurrency & throttling:**
+- `concurrency: 1` — single upload at a time to prevent server overload
+- 500ms delay before each upload (`setTimeout` in `_uploadFile`) as additional throttle
+- Managed via `activeUploads` counter
+
+**Auto-start queue on enqueue:**
+- `enqueue()` calls `this.start()` at the end — no manual Start button needed to begin processing
 
 **Retry logic:**
 - Up to `maxRetries: 5` with exponential backoff: `2^retries * 1000`ms (2s, 4s, 8s, 16s, 32s)
@@ -220,11 +259,21 @@ Three-tab interface: **Import**, **Queue**, **History**.
 - Retry single file (`retryFile`), retry all failed (`retryAllFailed`)
 - Skip file (`skipFile`)
 - Clear queue (`clearQueue`), clear by status (`clearByStatus`)
-- Batch counters (`_batchCompleted`, `_batchSkipped`, `_batchFailed`) reset on each `start()`
+- Batch completion counters (`_batchCompleted`, `_batchSkipped`, `_batchFailed`) — reset on each `start()` call, reported in the completion notification (per-run, not cumulative)
 
 **Network reconnection:**
 - 30s `setInterval` in main.js checks `uploader.verifyToken()`
 - If online and failed files exist with idle queue → `retryAllFailed()`
+
+**Export to Excel:**
+- "Export" button on Queue tab toolbar exports current filtered file list to `.xlsx`
+- Uses `xlsx` package via `migration:export-queue` IPC handler
+- Shows save dialog (default: `taxone-queue-export.xlsx`), writes file, opens in system app
+- Columns: Filename, Client, Folder, Size, Status, Error, Path
+
+**Queue status dot indicator:**
+- Colored dot on Queue tab label: green (running), amber (paused), gray (idle)
+- CSS classes: `queue-dot-running`, `queue-dot-paused`, `queue-dot-idle`
 
 **Queue UI:**
 - Filter pills: All, Pending, Uploading, Failed, Completed, Skipped
@@ -233,10 +282,10 @@ Three-tab interface: **Import**, **Queue**, **History**.
 - Progress bar, stat counts, percentage, total size (uploaded / total)
 - Virtualizes at 200 rows with "Show all" button
 - In-place file row updates via `migration:file-update` IPC event
-- Retry flash animation on retry
+- Retry flash animation on retry (`retryFlash` CSS animation)
 - File rows show: filename, client name, folder path, size, status badge, actions (Retry/Skip)
 - Error messages shown below failed rows, skip reasons below skipped rows
-- OS `Notification` on queue completion with completed/skipped/failed counts
+- OS `Notification` on queue completion with completed/skipped/failed counts (batch counters)
 
 ### History Tab
 
@@ -251,7 +300,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/desktop/clients` | Search/list clients (`?search=`, `?limit=`) |
+| `GET` | `/api/desktop/clients` | Search/list clients (`?search=`, `?limit=`, `?include_all=`) |
 | `GET` | `/api/desktop/clients/{id}/folders` | Folder tree (`?parent_id=`), returns `{folders, breadcrumb, parent_id}` |
 | `POST` | `/api/desktop/upload` | Upload file (multipart: `file`, `client_id`, `folder_path`, `filename`) |
 
@@ -260,7 +309,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 - Duplicate detection: returns `{skipped: true, document_id}` if same filename exists in same client+folder
 - CSRF excluded (api.php routes)
 - Cloudflare WAF bypass for `/api/desktop/*` POST
-- Axios timeout: 300,000ms (5 min) for uploads, 10,000ms for token verification
+- Axios timeout: 300,000ms (5 min) for uploads, 10,000ms for token verification (`verifyTokenWith`)
 
 ### Web Auth Endpoint
 
@@ -276,7 +325,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 
 | Channel | Direction | Purpose |
 |---------|-----------|---------|
-| `auth:login` | invoke | Verify token with server, save to keychain + store, start watching, init queue |
+| `auth:login` | invoke | Verify token with server, save to keychain + store, start watching, init queue, send auth-changed |
 | `auth:sign-out` | invoke | Stop watcher, clear token, update tray, notify migration window, show login |
 | `settings:get` | invoke | Return `{serverUrl, watchPath, moveAfterUpload, hasToken}` |
 | `settings:save` | invoke | Save watchPath + moveAfterUpload, restart watcher |
@@ -305,9 +354,9 @@ Three-tab interface: **Import**, **Queue**, **History**.
 | `migration:is-authenticated` | invoke | Check if token exists |
 | `migration:scan-folders` | invoke | Scan directory trees, return `{clientFolders}` |
 | `migration:scan-files` | invoke | Scan loose file paths, return `{name, path, files}` with oversized flags |
-| `migration:get-clients` | invoke | Fetch all TaxOne clients (limit: 9999) |
+| `migration:get-clients` | invoke | Fetch all TaxOne clients (limit: 2000, `include_all: true`) |
 | `migration:match-clients` | invoke | Match scanned folders against clients |
-| `migration:enqueue` | invoke | Add files to upload queue, return stats |
+| `migration:enqueue` | invoke | Add files to upload queue (auto-starts), return stats |
 | `migration:start` | invoke | Start queue processing, return stats |
 | `migration:pause` | invoke | Pause queue processing, return stats |
 | `migration:retry-file` | invoke | Retry a single failed file, return stats |
@@ -324,6 +373,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 | `migration:set-last-client` | invoke | Save last used client |
 | `migration:select-folder` | invoke | Native folder picker dialog |
 | `migration:open-path` | invoke | Open file/folder in system file manager |
+| `migration:export-queue` | invoke | Export files to Excel (.xlsx), show save dialog, open file |
 | `migration:flush-save` | invoke | Force immediate disk write |
 
 ### Push Events (main → renderer)
@@ -333,7 +383,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 | `queue-updated` | confirm-upload | `{total, current}` — current file + queue count |
 | `migration:progress` | migration | Queue stats (total, completed, failed, pending, uploading, skipped, percent, queueStatus) |
 | `migration:file-update` | migration | Single file status change (for in-place row update) |
-| `migration:auth-changed` | migration | `boolean` — auth state changed (sign in/out), updates UI accordingly |
+| `migration:auth-changed` | migration | `boolean` — auth state changed (sign in/out), updates UI lock state and connection status |
 
 ---
 
@@ -407,12 +457,34 @@ Used by `MigrationQueue` class.
 
 ---
 
+## Tray Menu
+
+`updateTrayMenu(status)` builds a dynamic context menu based on connection status:
+
+| Item | Condition |
+|------|-----------|
+| TaxOne Desktop (disabled label) | Always |
+| File Upload | Always — opens migration window |
+| WATCH FOLDER (section header) | Always |
+| Status label (emoji + text) | Always — disconnected/watching/uploading/error |
+| Watch folder path | When watch path exists |
+| Open Watch Folder | When watch path exists |
+| N file(s) pending | When pending watch files > 0 |
+| Settings... | Always |
+| **Sign In** | When `status === 'disconnected'` |
+| **Sign Out** | When `status !== 'disconnected'` — clears token, sends auth-changed, shows login |
+| Quit TaxOne Desktop | Always |
+
+Single-click on tray icon opens File Upload window. Right-click opens context menu.
+
+---
+
 ## Build & Distribution
 
 - **electron-builder** with NSIS installer for Windows
 - Desktop + Start Menu shortcuts, custom installer icon
 - `appId: com.taxone.desktop`
-- Custom protocol `taxone-desktop://` registered in electron-builder config
+- Custom protocol `taxone-desktop://` registered in `electron-builder.yml` under `protocols`
 - Icon: `assets/icon.ico` (installer + NSIS), `assets/icon.png` (app window)
 - Files included: `src/**/*`, `assets/**/*`, `node_modules/**/*`, `package.json`
 - Output: `dist/`
@@ -459,6 +531,12 @@ Used by `MigrationQueue` class.
 | 200-row virtualization in Queue tab | Prevents DOM thrashing with 30k+ files |
 | Import rows persisted to store | Survives window close/reopen during long import sessions |
 | Three separate electron-store instances | Separates concerns: app flags, user settings, queue state |
+| Concurrency: 1 with 500ms throttle | Prevents server overload during bulk uploads |
+| Auto-start queue on enqueue | Eliminates extra manual step — `enqueue()` calls `start()` automatically |
+| Batch counters reset per start | Completion notification shows per-run results, not cumulative totals |
+| `NODE_TLS_REJECT_UNAUTHORIZED = '0'` | Allows connections to servers with self-signed certificates |
+| HTTPS enforcement in `saveServerUrl` | Forces `https://` for non-localhost/non-`.test` URLs |
+| Auth-changed event propagation | Single source of truth for auth state across all windows |
 
 ---
 
@@ -475,19 +553,19 @@ taxone-desktop/
 │   ├── icon.svg                  # App icon source
 │   └── tray-icon.png             # System tray icon
 ├── src/
-│   ├── main.js                   # App entry — lifecycle, tray, windows, IPC handlers, queue init, protocol handler
-│   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL
+│   ├── main.js                   # App entry — lifecycle, tray, windows, IPC handlers, queue init, protocol handler, TLS config
+│   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL, HTTPS enforcement
 │   ├── watcher.js                # chokidar watch folder, file parsing, move-to-Uploaded/Cancelled
 │   ├── uploader.js               # Axios API client — search, folders, upload, token verification
-│   ├── migration.js              # MigrationQueue class — persistent queue engine, client matching, scanning
-│   ├── migration-ipc.js          # IPC handler registration for file upload tool
+│   ├── migration.js              # MigrationQueue class — persistent queue engine, client matching, scanning, throttling
+│   ├── migration-ipc.js          # IPC handler registration for file upload tool, Excel export
 │   ├── preload.js                # contextBridge for login/settings/confirm windows (window.taxone)
 │   ├── preload-migration.js      # contextBridge for file upload window (window.electronAPI.migration)
 │   └── renderer/
-│       ├── login.html            # Browser OAuth + manual token paste, server URL input
-│       ├── settings.html         # Watch folder config, connection status, auto-launch toggle
+│       ├── login.html            # Browser OAuth + manual token paste, server URL auto-fill
+│       ├── settings.html         # Watch folder config, connection status, auto-launch toggle, sign in/out
 │       ├── confirm-upload.html   # Per-file upload: rename, client search, folder browser, cancel
-│       └── migration.html        # File upload tool: import/queue/history tabs
+│       └── migration.html        # File upload tool: import/queue/history tabs, auth guards, Excel export, drop overlay
 ├── electron-builder.yml          # Build config — NSIS, protocol registration, icons
 ├── package.json                  # Dependencies & scripts
 └── ARCHITECTURE.md               # This file
