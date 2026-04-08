@@ -29,7 +29,7 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
             background: var(--gray-50);
             color: var(--gray-800);
-            font-size: 13px;
+            font-size: 14px;
             line-height: 1.5;
             height: 100vh;
             display: flex;
@@ -60,7 +60,7 @@
         }
         .tab {
             padding: 10px 20px;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 500;
             color: var(--gray-500);
             cursor: pointer;
@@ -124,7 +124,7 @@
             cursor: default;
             border-style: solid;
         }
-        .drop-zone-compact .dz-text { font-size: 13px; color: var(--gray-600); }
+        .drop-zone-compact .dz-text { font-size: 14px; color: var(--gray-600); }
         .drop-zone-compact .dz-text strong { color: var(--gray-800); }
 
         /* ── Buttons ────────────────────────────────────── */
@@ -135,7 +135,7 @@
             padding: 7px 14px;
             border: none;
             border-radius: 6px;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.15s;
@@ -345,7 +345,7 @@
             justify-content: space-between;
             align-items: center;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 14px;
         }
         .folder-modal-body {
             flex: 1;
@@ -365,7 +365,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 13px;
+            font-size: 14px;
         }
         .folder-item:hover {
             background: var(--gray-100);
@@ -1719,7 +1719,7 @@ api.onFileUpdate((file) => {
     if (idx !== -1) allFiles[idx] = file;
 
     // If filtering, re-render if file status changed out of filter
-    if (currentFilter !== 'all' && file.status !== currentFilter) {
+    if (currentFilter !== 'all') {
         renderFiles();
     }
 });
