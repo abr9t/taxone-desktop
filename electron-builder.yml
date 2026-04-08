@@ -20,6 +20,7 @@ win:
   icon: assets/icon.ico
 
 nsis:
+  artifactName: "TaxOne-Desktop-Setup.${ext}"
   oneClick: false
   allowToChangeInstallationDirectory: false
   createDesktopShortcut: true
