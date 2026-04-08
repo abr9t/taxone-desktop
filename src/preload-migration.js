@@ -78,5 +78,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         onAuthChanged: (callback) => {
             ipcRenderer.on('migration:auth-changed', (_event, authed) => callback(authed));
         },
+        showLogin: () => ipcRenderer.invoke('settings:show-login'),
     },
 });

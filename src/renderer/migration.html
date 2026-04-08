@@ -560,7 +560,7 @@
 <div class="header">
     <div>
         <h1>📂 File Upload</h1>
-        <div class="subtitle">Upload files to TaxOne</div>
+        <div class="subtitle" id="connectionStatus">Not connected</div>
     </div>
 </div>
 
@@ -1708,6 +1708,11 @@ api.onFileUpdate((file) => {
     // Update the cached array
     const idx = allFiles.findIndex(f => f.id === file.id);
     if (idx !== -1) allFiles[idx] = file;
+
+    // If filtering, re-render if file status changed out of filter
+    if (currentFilter !== 'all' && file.status !== currentFilter) {
+        renderFiles();
+    }
 });
 
 // ── History Tab ────────────────────────────────────────────────────────
@@ -1773,6 +1778,17 @@ function updateAuthUI() {
 
         console.log('[migration] updateAuthUI called, isAuthed =', isAuthed);
 
+        const statusEl = document.getElementById('connectionStatus');
+        if (statusEl) {
+            if (isAuthed) {
+                api.getServerUrl().then(url => {
+                    statusEl.textContent = 'Connected to ' + (url || 'TaxOne');
+                });
+            } else {
+                statusEl.textContent = 'Not connected';
+            }
+        }
+
         if (isAuthed) {
             if (dropZoneEl) {
                 dropZoneEl.classList.remove('disabled');
@@ -1794,7 +1810,7 @@ function updateAuthUI() {
                 dropZoneEl.classList.add('disabled');
             }
             if (dropZoneText) {
-                dropZoneText.innerHTML = '🔒 <strong>Sign in to upload files</strong>';
+                dropZoneText.innerHTML = '🔒 <strong>Sign in to upload files</strong> <button class="btn btn-sm btn-amber" onclick="event.stopPropagation(); api.showLogin();">Sign In</button>';
             }
             if (btnEnqueue) btnEnqueue.disabled = true;
             if (btnStart) btnStart.disabled = true;
