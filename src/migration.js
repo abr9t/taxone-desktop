@@ -488,6 +488,9 @@ class MigrationQueue {
     }
 
     async _uploadFile(file) {
+        // Throttle: small delay to avoid overwhelming the server
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         // Mark as uploading
         this._updateFile(file.id, { status: FILE_STATUS.UPLOADING, error: null });
 
@@ -539,6 +542,7 @@ class MigrationQueue {
             this._scheduleHistorySave();
 
         } catch (err) {
+            console.error('[upload] error details:', err.response?.status, err.response?.data, err.message);
             const retries = (file.retries || 0) + 1;
             const isRetryable = this._isRetryableError(err);
 

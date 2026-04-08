@@ -15,7 +15,10 @@
       "Bash(tasklist)",
       "Bash(npx which:*)",
       "Bash(ls node_modules/.bin/electron*)",
-      "Bash(taskkill //F //IM electron.exe)"
+      "Bash(taskkill //F //IM electron.exe)",
+      "Bash(grep -rn --include=\"*.js\" --include=\"*.json\" --include=\"*.html\" -iE \"\\(api[_-]?key|secret|password|token\\)\\\\s*[:=]\\\\s*['\\\\\"][^'\\\\\"]{8,}\" src/)",
+      "Bash(xargs grep:*)",
+      "Bash(git submodule:*)"
     ]
   }
 }

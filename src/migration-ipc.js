@@ -152,7 +152,7 @@ function registerMigrationIPC(queue, getWindow, uploader) {
  */
 async function fetchAllClients(uploader) {
     try {
-        const data = await uploader.searchClients('', 9999);
+        const data = await uploader.searchClients('', 2000);
         return data.clients || data || [];
     } catch (err) {
         console.error('Failed to fetch clients:', err.message);

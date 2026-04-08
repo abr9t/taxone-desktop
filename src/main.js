@@ -124,15 +124,10 @@ app.whenReady().then(async () => {
 
     const token = await auth.getToken();
     const serverUrl = auth.getServerUrl();
-    debugLog('[startup] token exists:', !!token);
-    debugLog('[startup] serverUrl:', serverUrl);
-    debugLog('[startup] userData:', app.getPath('userData'));
     if (!token) {
-        debugLog('[startup] no token — showing login');
         showLogin();
     } else {
         const result = await uploader.verifyToken();
-        debugLog('[startup] verifyToken result:', result);
         if (result === 'auth_error') {
             showLogin();
         } else {
@@ -362,7 +357,7 @@ function initMigrationQueue() {
 
     migrationQueue = new MigrationQueue({
         uploadFn,
-        concurrency: 3,
+        concurrency: 1,
         maxRetries: 5,
         onProgress: (stats) => {
             if (migrationWindow && !migrationWindow.isDestroyed()) {
