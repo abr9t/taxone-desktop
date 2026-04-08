@@ -18,7 +18,8 @@
       "Bash(taskkill //F //IM electron.exe)",
       "Bash(grep -rn --include=\"*.js\" --include=\"*.json\" --include=\"*.html\" -iE \"\\(api[_-]?key|secret|password|token\\)\\\\s*[:=]\\\\s*['\\\\\"][^'\\\\\"]{8,}\" src/)",
       "Bash(xargs grep:*)",
-      "Bash(git submodule:*)"
+      "Bash(git submodule:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

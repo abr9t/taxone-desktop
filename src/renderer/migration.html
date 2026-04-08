@@ -660,6 +660,7 @@
             </div>
             <input type="text" id="fileSearch" placeholder="Search files..." oninput="renderFiles()"
                    style="padding:4px 10px; border:1px solid var(--gray-300); border-radius:6px; font-size:12px; width:180px; outline:none;">
+            <button class="btn btn-sm btn-outline" onclick="exportQueue()">Export</button>
             <div class="toolbar-spacer"></div>
             <span id="filterCount" style="font-size:11px; color:var(--gray-400);"></span>
         </div>
@@ -1584,6 +1585,14 @@ function showAllFiles() {
     let html = '';
     for (const f of files) html += renderFileRow(f);
     container.innerHTML = html;
+}
+
+async function exportQueue() {
+    let files = allFiles;
+    if (currentFilter !== 'all') {
+        files = files.filter(f => f.status === currentFilter);
+    }
+    await api.exportQueue(files);
 }
 
 // ── Queue Controls ─────────────────────────────────────────────────────

@@ -134,6 +134,38 @@ function registerMigrationIPC(queue, getWindow, uploader) {
         return shell.openPath(filePath);
     });
 
+    ipcMain.handle('migration:export-queue', async (_event, files) => {
+        const XLSX = require('xlsx');
+        const { shell } = require('electron');
+
+        const rows = files.map(f => ({
+            'Filename': f.filename,
+            'Client': f.clientName,
+            'Folder': f.folderPath || '/',
+            'Size': f.size ? Math.round(f.size / 1024) + ' KB' : '',
+            'Status': f.status,
+            'Error': f.error || '',
+            'Path': f.absolutePath,
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Queue');
+
+        const win = getWindow() || BrowserWindow.getFocusedWindow();
+        const result = await dialog.showSaveDialog(win, {
+            title: 'Export Queue',
+            defaultPath: 'taxone-queue-export.xlsx',
+            filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+        });
+
+        if (result.canceled) return null;
+
+        XLSX.writeFile(wb, result.filePath);
+        shell.openPath(result.filePath);
+        return result.filePath;
+    });
+
     ipcMain.handle('migration:select-folder', async () => {
         const win = getWindow() || BrowserWindow.getFocusedWindow();
         const result = await dialog.showOpenDialog(win, {
