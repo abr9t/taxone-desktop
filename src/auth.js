@@ -53,7 +53,9 @@ function getServerUrl() {
 }
 
 function saveServerUrl(url) {
-    // Normalize: strip trailing slash
+    if (url && !url.includes('localhost') && !url.includes('.test')) {
+        url = url.replace(/^http:\/\//, 'https://');
+    }
     store.set('serverUrl', url.replace(/\/+$/, ''));
 }
 
