@@ -896,13 +896,6 @@ async function scanAndAppendFiles(filePaths) {
             allClients = await api.getClients();
         }
 
-        // Check for last used client
-        const lastClient = await api.getLastClient();
-        let prefilledClient = null;
-        if (lastClient && allClients.some(c => c.id === lastClient.id)) {
-            prefilledClient = lastClient;
-        }
-
         // Each drop creates a separate row — never merge into existing
         const files = looseGroup.files;
         let rowName;
@@ -914,8 +907,8 @@ async function scanAndAppendFiles(filePaths) {
 
         importRows.push({
             folderName: rowName,
-            matchType: prefilledClient ? 'manual' : 'unmatched',
-            client: prefilledClient,
+            matchType: 'unmatched',
+            client: null,
             candidates: [],
             files: files,
             checked: true,
@@ -1071,14 +1064,32 @@ function createClientPicker(rowIndex, selectedClient) {
 
     let highlightIndex = -1;
 
-    function renderOptions(filter) {
+    async function renderOptions(filter) {
         dropdown.innerHTML = '';
         const query = (filter || '').toLowerCase();
         const filtered = query
             ? allClients.filter(c => c.name.toLowerCase().includes(query)).slice(0, 10)
             : allClients.slice(0, 10);
 
-        if (filtered.length === 0) {
+        // Check for last-used client to show at top
+        let lastClient = null;
+        try { lastClient = await api.getLastClient(); } catch {}
+        if (lastClient && !allClients.some(c => c.id === lastClient.id)) lastClient = null;
+
+        // Build display list: lastClient first (if applicable), then filtered
+        let displayList = [...filtered];
+        let showSeparator = false;
+        if (lastClient) {
+            const matchesQuery = !query || lastClient.name.toLowerCase().includes(query);
+            if (matchesQuery) {
+                // Remove from filtered list if present, then prepend
+                displayList = displayList.filter(c => c.id !== lastClient.id);
+                displayList.unshift(lastClient);
+                showSeparator = true;
+            }
+        }
+
+        if (displayList.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'client-picker-empty';
             empty.textContent = query ? 'No matching clients' : 'No clients available';
@@ -1087,15 +1098,29 @@ function createClientPicker(rowIndex, selectedClient) {
         }
 
         highlightIndex = -1;
-        for (let j = 0; j < filtered.length; j++) {
+        for (let j = 0; j < displayList.length; j++) {
+            // Insert separator after the last-used client
+            if (showSeparator && j === 1) {
+                const sep = document.createElement('div');
+                sep.style.cssText = 'border-top:1px solid var(--gray-200); margin:2px 0;';
+                dropdown.appendChild(sep);
+            }
+
             const opt = document.createElement('div');
             opt.className = 'client-picker-option';
-            opt.textContent = filtered[j].name;
-            opt.dataset.clientId = filtered[j].id;
+            opt.dataset.clientId = displayList[j].id;
             opt.onmousedown = (e) => {
                 e.preventDefault();
-                selectClient(filtered[j]);
+                selectClient(displayList[j]);
             };
+
+            // Label the last-used client
+            if (showSeparator && j === 0) {
+                opt.innerHTML = escHtml(displayList[j].name) + ' <span style="font-size:10px; color:var(--gray-400); font-style:italic; margin-left:4px;">Recent</span>';
+            } else {
+                opt.textContent = displayList[j].name;
+            }
+
             dropdown.appendChild(opt);
         }
     }

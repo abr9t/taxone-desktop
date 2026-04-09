@@ -373,6 +373,7 @@ function initMigrationQueue() {
             }
         },
         onComplete: (stats) => {
+            if (stats.completed === 0 && stats.skipped === 0) return;
             new Notification({
                 title: 'TaxOne — Upload Complete',
                 body: `${stats.completed} files uploaded, ${stats.skipped} skipped, ${stats.failed} failed.`,
