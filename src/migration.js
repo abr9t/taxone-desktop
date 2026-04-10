@@ -14,8 +14,8 @@ const { randomUUID } = require('crypto');
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — matches Laravel upload validation
 
-const JUNK_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.sync']);
-const JUNK_EXTENSIONS = new Set(['.tmp', '.crdownload', '.partial']);
+const JUNK_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
+const JUNK_EXTENSIONS = new Set(['.tmp', '.crdownload', '.partial', '.sync']);
 
 function isJunkFile(name) {
     if (JUNK_NAMES.has(name)) return true;
