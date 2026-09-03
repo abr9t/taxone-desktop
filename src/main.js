@@ -98,7 +98,7 @@ async function handleAuthUrl(url) {
         }
 
         new Notification({
-            title: 'TaxOne Desktop',
+            title: 'Quework Desktop',
             body: 'Successfully signed in.',
         }).show();
     } catch (err) {
@@ -108,7 +108,7 @@ async function handleAuthUrl(url) {
 
 // ─── App Lifecycle ────────────────────────────────────────────────
 
-app.setName('TaxOne Desktop');
+app.setName('Quework Desktop');
 
 app.setAppUserModelId('com.taxone.desktop');
 
@@ -121,6 +121,12 @@ app.whenReady().then(async () => {
     }
 
     createTray();
+
+    // Re-point legacy installs still persisted against the old taxone.cpa
+    // host before anything reads serverUrl. One-time, guarded (see auth.js).
+    if (auth.migrateLegacyHost()) {
+        debugLog('[migration] Re-pointed persisted host taxone.cpa -> caputa.quework.app');
+    }
 
     const token = await auth.getToken();
     const serverUrl = auth.getServerUrl();
@@ -166,7 +172,7 @@ function createTray() {
     }
 
     tray = new Tray(trayIcon);
-    tray.setToolTip('TaxOne Desktop');
+    tray.setToolTip('Quework Desktop');
     updateTrayMenu('disconnected');
     tray.on('click', () => showMigrationTool());
     tray.on('double-click', () => showMigrationTool());
@@ -187,7 +193,7 @@ function updateTrayMenu(status) {
     const queueCount = pendingFiles.length;
 
     const menu = Menu.buildFromTemplate([
-        { label: 'TaxOne Desktop', enabled: false },
+        { label: 'Quework Desktop', enabled: false },
         { type: 'separator' },
         {
             label: '⬆ File Upload',
@@ -229,7 +235,7 @@ function updateTrayMenu(status) {
                 },
             },
         ]),
-        { label: 'Quit TaxOne Desktop', click: () => app.quit() },
+        { label: 'Quit Quework Desktop', click: () => app.quit() },
     ]);
 
     trayMenu = menu;
@@ -318,7 +324,7 @@ function showMigrationTool() {
         minWidth: 700,
         minHeight: 400,
         maxHeight: 900,
-        title: 'TaxOne — File Upload',
+        title: 'Quework — File Upload',
         icon: path.join(__dirname, '..', 'assets', 'icon.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload-migration.js'),
@@ -333,7 +339,7 @@ function showMigrationTool() {
         if (!appStore.get('hasClosedUploadWindow')) {
             appStore.set('hasClosedUploadWindow', true);
             new Notification({
-                title: 'TaxOne Desktop',
+                title: 'Quework Desktop',
                 body: 'The app is still running in the system tray. Right-click the tray icon for options.',
             }).show();
         }
@@ -364,7 +370,7 @@ function initMigrationQueue() {
                 migrationWindow.webContents.send('migration:progress', stats);
             }
             if (stats.queueStatus === 'running' && tray) {
-                tray.setToolTip(`TaxOne — Migrating: ${stats.completed}/${stats.total} (${stats.percent}%)`);
+                tray.setToolTip(`Quework — Migrating: ${stats.completed}/${stats.total} (${stats.percent}%)`);
             }
         },
         onFileUpdate: (file) => {
@@ -375,7 +381,7 @@ function initMigrationQueue() {
         onComplete: (stats) => {
             if (stats.completed === 0 && stats.skipped === 0) return;
             new Notification({
-                title: 'TaxOne — Upload Complete',
+                title: 'Quework — Upload Complete',
                 body: `${stats.completed} files uploaded, ${stats.skipped} skipped, ${stats.failed} failed.`,
             }).show();
         },
@@ -553,7 +559,7 @@ ipcMain.handle('upload:file', async (_, { filePath, clientId, folderPath, filena
         }
 
         new Notification({
-            title: 'TaxOne — Upload Complete',
+            title: 'Quework — Upload Complete',
             body: `${result.filename} uploaded successfully.`,
         }).show();
 
