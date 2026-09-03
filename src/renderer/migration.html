@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
-    <title>TaxOne — File Upload</title>
+    <title>Quework — File Upload</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
@@ -727,7 +727,7 @@ const api = window.electronAPI.migration;
 let currentTab = 'import';
 let currentFilter = 'all';
 let allFiles = [];           // cached file list
-let allClients = [];         // from TaxOne API
+let allClients = [];         // from Quework API
 let isAuthed = false;
 
 // Persistent import staging state
@@ -1816,7 +1816,7 @@ function updateAuthUI() {
         if (statusEl) {
             if (isAuthed) {
                 api.getServerUrl().then(url => {
-                    statusEl.textContent = 'Connected to ' + (url || 'TaxOne');
+                    statusEl.textContent = 'Connected to ' + (url || 'Quework');
                 });
             } else {
                 statusEl.textContent = 'Not connected';

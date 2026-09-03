@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TaxOne Desktop — Sign In</title>
+    <title>Quework Desktop — Sign In</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -184,14 +184,14 @@
     </style>
 </head>
 <body>
-    <div class="logo">T</div>
-    <h1>TaxOne Desktop</h1>
-    <p class="subtitle">Connect to your TaxOne account</p>
+    <div class="logo">Q</div>
+    <h1>Quework Desktop</h1>
+    <p class="subtitle">Connect to your Quework account</p>
 
     <div class="login-content" id="loginContent">
         <label for="serverUrl">Server URL</label>
-        <input type="url" id="serverUrl" placeholder="https://taxone.cpa" required>
-        <p class="hint">Your firm's TaxOne URL</p>
+        <input type="url" id="serverUrl" placeholder="https://your-firm.quework.app" required>
+        <p class="hint">Your firm's Quework URL</p>
 
         <div class="error" id="error"></div>
 
@@ -218,13 +218,13 @@
 
     <div class="success-state" id="successState">
         <div class="success-check">&#10003;</div>
-        <div class="success-msg">Connected to TaxOne</div>
+        <div class="success-msg">Connected to Quework</div>
         <div class="success-url" id="successUrl"></div>
         <button class="success-close" onclick="window.close()">Close</button>
     </div>
 
     <p class="help">
-        Need help? Open TaxOne in your browser and go to<br>
+        Need help? Open Quework in your browser and go to<br>
         Firm Settings &rarr; Integrations &rarr; Desktop App
     </p>
 
@@ -262,7 +262,7 @@
             hideError();
             const serverUrl = getServerUrl();
             if (!serverUrl) {
-                showError('Enter your TaxOne URL first.');
+                showError('Enter your Quework URL first.');
                 return;
             }
             const url = serverUrl.replace(/\/+$/, '') + '/desktop/authorize';
@@ -275,7 +275,7 @@
             const token = document.getElementById('token').value.trim();
 
             if (!serverUrl) {
-                showError('Enter your TaxOne URL first.');
+                showError('Enter your Quework URL first.');
                 return;
             }
             if (!token) {

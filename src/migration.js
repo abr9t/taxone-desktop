@@ -511,7 +511,7 @@ class MigrationQueue {
             if (result.skipped) {
                 this._updateFile(file.id, {
                     status: FILE_STATUS.SKIPPED,
-                    error: 'Already exists in TaxOne',
+                    error: 'Already exists in Quework',
                     documentId: result.document_id,
                 });
                 this._batchSkipped++;

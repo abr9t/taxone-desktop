@@ -1,5 +1,5 @@
 appId: com.taxone.desktop
-productName: TaxOne Desktop
+productName: Quework Desktop
 
 directories:
   output: dist
@@ -11,7 +11,7 @@ files:
   - package.json
 
 protocols:
-  - name: TaxOne Desktop
+  - name: Quework Desktop
     schemes:
       - taxone-desktop
 
@@ -20,12 +20,12 @@ win:
   icon: assets/icon.ico
 
 nsis:
-  artifactName: "TaxOne-Desktop-Setup.${ext}"
+  artifactName: "Quework-Desktop-Setup.${ext}"
   oneClick: false
   allowToChangeInstallationDirectory: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: TaxOne Desktop
+  shortcutName: Quework Desktop
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
   installerHeaderIcon: assets/icon.ico

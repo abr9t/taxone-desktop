@@ -155,7 +155,7 @@ function registerMigrationIPC(queue, getWindow, uploader) {
         const win = getWindow() || BrowserWindow.getFocusedWindow();
         const result = await dialog.showSaveDialog(win, {
             title: 'Export Queue',
-            defaultPath: 'taxone-queue-export.xlsx',
+            defaultPath: 'quework-queue-export.xlsx',
             filters: [{ name: 'Excel', extensions: ['xlsx'] }],
         });
 
