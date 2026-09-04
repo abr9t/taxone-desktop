@@ -1,17 +1,18 @@
 {
   "name": "taxone-desktop",
-  "productName": "TaxOne Desktop",
+  "productName": "Quework Desktop",
   "version": "1.1.5",
-  "description": "TaxOne Desktop Companion — watch folder file uploader",
+  "description": "Quework Desktop Companion — watch folder file uploader",
   "main": "src/main.js",
   "scripts": {
+    "test": "node test/migrate-legacy-host.test.js",
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development electron .",
     "build": "electron-builder --win",
     "build:dir": "electron-builder --win --dir",
     "build:win": "electron-builder --win"
   },
-  "author": "TaxOne LLC",
+  "author": "Quework LLC",
   "license": "UNLICENSED",
   "private": true,
   "devDependencies": {

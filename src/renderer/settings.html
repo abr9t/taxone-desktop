@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TaxOne Desktop — Settings</title>
+    <title>Quework Desktop — Settings</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -123,9 +123,9 @@
         </div>
         <p class="info">Files stay on your computer — they're just moved to avoid re-uploading.</p>
 
-        <div class="folder-structure">TaxoneWatch/
+        <div class="folder-structure">QueworkWatch/
 ├── SMITH, JOHN/          ← client name (auto-matched)
-│   ├── 2024/             ← creates folder in TaxOne
+│   ├── 2024/             ← creates folder in Quework
 │   │   └── 1040.pdf      ← uploaded file
 │   └── W2.pdf            ← uploaded to root
 └── receipt.pdf           ← you pick the client</div>
@@ -137,7 +137,7 @@
             <input type="checkbox" id="autoLaunch">
             <label for="autoLaunch">Start with Windows</label>
         </div>
-        <p class="info">Automatically launch TaxOne Desktop when you sign in to Windows</p>
+        <p class="info">Automatically launch Quework Desktop when you sign in to Windows</p>
     </div>
 
     <div class="actions">
@@ -179,7 +179,7 @@
             if (settings.hasToken) {
                 document.getElementById('connectedState').style.display = '';
                 document.getElementById('disconnectedState').style.display = 'none';
-                document.getElementById('serverUrlText').textContent = settings.serverUrl || 'TaxOne';
+                document.getElementById('serverUrlText').textContent = settings.serverUrl || 'Quework';
             } else {
                 document.getElementById('connectedState').style.display = 'none';
                 document.getElementById('disconnectedState').style.display = '';

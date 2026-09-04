@@ -1,6 +1,6 @@
-# TaxOne Desktop — Architecture
+# Quework Desktop — Architecture
 
-Electron companion app for [TaxOne](https://taxone.cpa). Two core features:
+Electron companion app for [Quework](https://taxone.cpa). Two core features:
 
 1. **Watch Folder** — monitors a local directory and prompts per-file upload to a matched client
 2. **File Upload Tool** — bulk import with drag-and-drop, client matching, persistent queue, throttled uploads
@@ -16,7 +16,7 @@ CommonJS throughout (no ESM — `electron-store` v8 requirement).
 | electron | ^33.0.0 | App shell |
 | electron-store | ^8.2.0 | Persistent key-value storage (NOT v10+ which is ESM-only) |
 | chokidar | ^4.0.0 | File system watcher |
-| axios | ^1.7.0 | HTTP client for TaxOne API |
+| axios | ^1.7.0 | HTTP client for Quework API |
 | keytar | ^7.9.0 | OS keychain for token storage (fallback: electron-store) |
 | xlsx | ^0.18.5 | Excel export for queue data |
 | form-data | (transitive) | Multipart uploads via axios |
@@ -95,13 +95,13 @@ File Upload exposes `window.electronAPI.migration` namespace.
   - `'ok'` → proceed with cached credentials, open File Upload window
   - `'auth_error'` (401/403) → show login
   - `'network_error'` → proceed anyway (offline-tolerant)
-- Tokens don't expire unless revoked from TaxOne Firm Settings
+- Tokens don't expire unless revoked from Quework Firm Settings
 
 ### Login Methods
 
 **1. Browser OAuth flow (primary):**
 - User enters server URL → clicks "Sign in with Browser" → opens `{serverUrl}/desktop/authorize` in default browser via `shell.openExternal()`
-- TaxOne web app authenticates user, then redirects to `taxone-desktop://auth?token=X&url=Y`
+- Quework web app authenticates user, then redirects to `taxone-desktop://auth?token=X&url=Y`
 - Custom protocol registered via `app.setAsDefaultProtocolClient('taxone-desktop')` (with `process.execPath` arg in dev mode)
 - `handleAuthUrl()` parses URL, saves token + server URL, configures uploader, starts watching, inits migration queue, opens File Upload window
 - Sends `migration:auth-changed` event to File Upload window with `true`
@@ -139,7 +139,7 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 **`src/watcher.js`**
 
-- chokidar monitors configurable watch path (default: `~/TaxoneWatch/`)
+- chokidar monitors configurable watch path (default: `~/QueworkWatch/`)
 - `ignoreInitial: true`, `awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 200 }`, `depth: 5`
 - Ignores: hidden files (regex), `.tmp`, `.crdownload`, `~` suffix
 - `parseFileInfo()` also skips files in `Uploaded/` and `Cancelled/` subfolders (at any depth, case-insensitive, backslash-safe)
@@ -250,7 +250,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 
 **Deduplication:**
 - **Local:** `enqueue()` checks `absolutePath` against existing `_files` entries
-- **Server-side:** upload endpoint returns `{skipped: true}` if same filename exists in same client+folder → file marked `skipped` with error "Already exists in TaxOne"
+- **Server-side:** upload endpoint returns `{skipped: true}` if same filename exists in same client+folder → file marked `skipped` with error "Already exists in Quework"
 
 **Oversized files:** files > 100MB auto-set to `skipped` status with error "File exceeds 100MB upload limit" at enqueue time
 
@@ -354,7 +354,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 | `migration:is-authenticated` | invoke | Check if token exists |
 | `migration:scan-folders` | invoke | Scan directory trees, return `{clientFolders}` |
 | `migration:scan-files` | invoke | Scan loose file paths, return `{name, path, files}` with oversized flags |
-| `migration:get-clients` | invoke | Fetch all TaxOne clients (limit: 2000, `include_all: true`) |
+| `migration:get-clients` | invoke | Fetch all Quework clients (limit: 2000, `include_all: true`) |
 | `migration:match-clients` | invoke | Match scanned folders against clients |
 | `migration:enqueue` | invoke | Add files to upload queue (auto-starts), return stats |
 | `migration:start` | invoke | Start queue processing, return stats |
@@ -404,10 +404,13 @@ Used by `auth.js` and `watcher.js`.
 
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
-| `serverUrl` | string | `''` | TaxOne server URL |
-| `watchPath` | string | `~/TaxoneWatch/` | Watch folder path |
+| `serverUrl` | string | `''` | Quework server URL |
+| `watchPath` | string | `~/QueworkWatch/` | Watch folder path |
 | `moveAfterUpload` | boolean | `true` | Move files to Uploaded/ subfolder |
 | `_token` | string | `null` | API token (fallback when keytar unavailable) |
+| `_hostMigratedV1` | boolean | `undefined` | Guard flag: legacy-host migration has run once |
+
+**Legacy-host migration** — `auth.migrateLegacyHost()` runs once at startup (`main.js`, `app.whenReady`, before `serverUrl` is read). Because electron-store lives in `userData` and survives installer updates, existing installs keep their persisted `serverUrl`; this step rewrites an exact-hostname match on `taxone.cpa` / `www.taxone.cpa` to `https://caputa.quework.app`, then sets `_hostMigratedV1` so it never runs again. Deliberately single-firm and exact-match — it must be retired before multi-tenant subdomains land, not generalized.
 
 ### Migration queue store (`migration-queue`)
 
@@ -432,12 +435,12 @@ Used by `MigrationQueue` class.
     clientId: number,
     clientName: string,
     folderName: string,    // source folder name
-    folderPath: string,    // destination folder path in TaxOne
+    folderPath: string,    // destination folder path in Quework
     filename: string,      // basename
     status: string,        // pending | uploading | completed | failed | skipped
     retries: number,       // 0–5
     error: string | null,
-    documentId: number | null,  // TaxOne document ID after upload
+    documentId: number | null,  // Quework document ID after upload
     uploadedAt: string | null,  // ISO timestamp
 }
 ```
@@ -450,7 +453,7 @@ Used by `MigrationQueue` class.
     filename: string,
     clientName: string,
     clientId: number,
-    documentId: number,    // TaxOne document ID
+    documentId: number,    // Quework document ID
     uploadedAt: string,    // ISO timestamp
 }
 ```
@@ -463,7 +466,7 @@ Used by `MigrationQueue` class.
 
 | Item | Condition |
 |------|-----------|
-| TaxOne Desktop (disabled label) | Always |
+| Quework Desktop (disabled label) | Always |
 | File Upload | Always — opens migration window |
 | WATCH FOLDER (section header) | Always |
 | Status label (emoji + text) | Always — disconnected/watching/uploading/error |
@@ -473,7 +476,7 @@ Used by `MigrationQueue` class.
 | Settings... | Always |
 | **Sign In** | When `status === 'disconnected'` |
 | **Sign Out** | When `status !== 'disconnected'` — clears token, sends auth-changed, shows login |
-| Quit TaxOne Desktop | Always |
+| Quit Quework Desktop | Always |
 
 Single-click on tray icon opens File Upload window. Right-click opens context menu.
 

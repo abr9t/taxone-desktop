@@ -7,7 +7,7 @@ const store = new Store({ name: 'taxone-settings' });
 
 let watcher = null;
 
-const DEFAULT_WATCH_PATH = path.join(require('os').homedir(), 'TaxoneWatch');
+const DEFAULT_WATCH_PATH = path.join(require('os').homedir(), 'QueworkWatch');
 
 // Allowed file extensions (matches Laravel's allowed upload list)
 const ALLOWED_EXTENSIONS = new Set([
