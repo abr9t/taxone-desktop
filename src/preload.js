@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('taxone', {
     login: (data) => ipcRenderer.invoke('auth:login', data),
     signOut: () => ipcRenderer.invoke('auth:sign-out'),
     getServerUrl: () => ipcRenderer.invoke('get-server-url'),
-    openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    openBrowserSignIn: (serverUrl) => ipcRenderer.invoke('auth:open-browser-sign-in', serverUrl),
 
     // Settings
     getSettings: () => ipcRenderer.invoke('settings:get'),

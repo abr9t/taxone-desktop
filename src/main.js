@@ -83,14 +83,60 @@ app.on('second-instance', (event, commandLine) => {
     }
 });
 
+// A protocol link is attacker-supplyable, and even a well-formed Quework URL
+// points at some other firm's server. Re-pointing an install that is already
+// paired would send the next upload — and the bearer token behind it — to
+// whoever sent the link, so ask first.
+async function confirmHostChange(nextUrl) {
+    const current = auth.getServerUrl();
+    if (!current || current === nextUrl) return true;
+
+    const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Cancel', 'Change server'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Change Quework server?',
+        message: 'This link wants to point Quework Desktop at a different server.',
+        detail: `Currently connected to:
+${current}
+
+The link asks for:
+${nextUrl}
+
+`
+            + "Only continue if you started this from your own firm's Quework site.",
+    });
+    return response === 1;
+}
+
+// Returns the canonical URL that was stored, or null if the link was
+// rejected or the user declined. Every protocol-borne URL goes through here.
+async function applyServerUrlFromLink(rawUrl) {
+    const result = auth.validateServerUrl(rawUrl);
+    if (!result.ok) {
+        debugLog(`[protocol] Rejected server URL: ${result.error}`);
+        dialog.showErrorBox('Quework Desktop', `This link was ignored.
+
+${result.error}`);
+        return null;
+    }
+    if (!(await confirmHostChange(result.url))) {
+        debugLog('[protocol] Server change declined by the user');
+        return null;
+    }
+    auth.saveServerUrl(result.url);
+    return result.url;
+}
+
 async function handleAuthUrl(url) {
     try {
         const parsed = new URL(url);
 
         if (parsed.hostname === 'connect') {
-            const serverUrl = parsed.searchParams.get('url');
-            if (serverUrl) {
-                await auth.saveServerUrl(serverUrl);
+            const rawServerUrl = parsed.searchParams.get('url');
+            if (rawServerUrl && !(await applyServerUrlFromLink(rawServerUrl))) {
+                return;
             }
             const token = await auth.getToken();
             if (token) {
@@ -107,12 +153,16 @@ async function handleAuthUrl(url) {
 
         // Default: auth handler (taxone-desktop://auth?token=X&url=Y)
         const token = parsed.searchParams.get('token');
-        const serverUrl = parsed.searchParams.get('url');
+        const rawServerUrl = parsed.searchParams.get('url');
 
-        if (!token || !serverUrl) return;
+        if (!token || !rawServerUrl) return;
+
+        // Host first: a token that arrived alongside a rejected host has no
+        // business being persisted.
+        const serverUrl = await applyServerUrlFromLink(rawServerUrl);
+        if (!serverUrl) return;
 
         await auth.saveToken(token);
-        await auth.saveServerUrl(serverUrl);
         uploader.configure(serverUrl, token);
 
         if (loginWindow && !loginWindow.isDestroyed()) {
@@ -483,13 +533,22 @@ function startWatching() {
 // Login
 ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
     try {
-        const isValid = await uploader.verifyTokenWith(serverUrl, token);
+        // Before verifyTokenWith, not after: that call sends the token to the
+        // host, so an unvalidated URL leaks it just as effectively as a
+        // malicious protocol link would.
+        const check = auth.validateServerUrl(serverUrl);
+        if (!check.ok) {
+            return { success: false, error: check.error };
+        }
+        const canonicalUrl = check.url;
+
+        const isValid = await uploader.verifyTokenWith(canonicalUrl, token);
         if (!isValid) {
             return { success: false, error: 'Invalid token. Check your token and server URL.' };
         }
         await auth.saveToken(token);
-        await auth.saveServerUrl(serverUrl);
-        uploader.configure(serverUrl, token);
+        auth.saveServerUrl(canonicalUrl);
+        uploader.configure(canonicalUrl, token);
 
         startWatching();
         initMigrationQueue();
@@ -634,7 +693,13 @@ ipcMain.handle('get-server-url', async () => {
     return auth.getServerUrl();
 });
 
-// Open external URL (for browser sign-in)
-ipcMain.handle('open-external', async (_event, url) => {
-    shell.openExternal(url);
+// Browser sign-in handoff. This used to be a general "open any URL the
+// renderer asks for" channel; it has only ever had one caller, so narrow it
+// to that caller and put the server URL through the same allowlist as the
+// persisted host.
+ipcMain.handle('auth:open-browser-sign-in', async (_event, serverUrl) => {
+    const result = auth.validateServerUrl(serverUrl);
+    if (!result.ok) return { success: false, error: result.error };
+    shell.openExternal(`${result.url}/desktop/authorize`);
+    return { success: true };
 });
