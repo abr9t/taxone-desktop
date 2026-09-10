@@ -3,6 +3,26 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// ─── userData pin ─────────────────────────────────────────────────
+//
+// This directory name is an IDENTIFIER, not branding. Do not "fix" it to
+// match the Quework display name.
+//
+// Electron derives userData from productName, and electron-store resolves
+// its directory once, at construction time, from app.getPath('userData').
+// Every store in this app is constructed at module load, so the pin has to
+// run before the first require() below that pulls one in — which is why it
+// sits here rather than next to app.setName().
+//
+// Every existing install keeps its serverUrl, watch folder, token fallback
+// and upload queue under "TaxOne Desktop". Letting the renamed productName
+// pick the directory instead points the app at a new, empty one: the legacy
+// host migration finds nothing to migrate, and every user lands on the login
+// screen with their upload queue gone.
+const USER_DATA_DIR = 'TaxOne Desktop';
+app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR));
+
 const auth = require('./auth');
 const watcher = require('./watcher');
 const uploader = require('./uploader');

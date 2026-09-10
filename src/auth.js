@@ -1,6 +1,28 @@
+const path = require('path');
 const Store = require('electron-store');
 
 const store = new Store({ name: 'taxone-settings' });
+
+// Tripwire for the userData pin in main.js. The Store above has already
+// resolved its directory: if the pin did not run first, it resolved to the
+// productName-derived folder, this install looks brand new, and there is
+// nothing for migrateLegacyHost() below to find. That failure is otherwise
+// completely silent, so make noise about it here.
+const EXPECTED_USER_DATA_DIR = 'TaxOne Desktop';
+try {
+    const actual = require('electron').app.getPath('userData');
+    if (path.basename(actual) !== EXPECTED_USER_DATA_DIR) {
+        console.error(
+            `[auth] userData resolved to "${actual}" but must be pinned to ` +
+            `"${EXPECTED_USER_DATA_DIR}" — every existing install's settings and ` +
+            'upload queue live there. Check that main.js calls ' +
+            "app.setPath('userData', ...) before it requires this module."
+        );
+    }
+} catch {
+    // Not running under Electron (unit tests) — nothing to check.
+}
+
 const SERVICE_NAME = 'TaxOneDesktop';
 const ACCOUNT_NAME = 'api-token';
 
