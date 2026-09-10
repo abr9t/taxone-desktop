@@ -7,7 +7,10 @@ const store = new Store({ name: 'taxone-settings' });
 
 let watcher = null;
 
+// The default for NEW installs only. Existing installs are pinned to the
+// legacy folder by migrateLegacyWatchPath() below.
 const DEFAULT_WATCH_PATH = path.join(require('os').homedir(), 'QueworkWatch');
+const LEGACY_DEFAULT_WATCH_PATH = path.join(require('os').homedir(), 'TaxoneWatch');
 
 // Allowed file extensions (matches Laravel's allowed upload list)
 const ALLOWED_EXTENSIONS = new Set([
@@ -21,6 +24,29 @@ function getWatchPath() {
 
 function setWatchPath(p) {
     store.set('watchPath', p);
+}
+
+// getWatchPath() falls back to DEFAULT_WATCH_PATH rather than persisting it,
+// and setWatchPath() only ever runs from the Settings window — so an install
+// whose owner never opened Settings has no watchPath key at all and is
+// watching whatever the default happened to be when it was built. Renaming
+// that default from TaxoneWatch to QueworkWatch silently moves those installs
+// off the folder they have been dropping files into for months. The userData
+// pin does not help here: there is no stored value to preserve.
+//
+// So persist the legacy default for anyone who is demonstrably using it.
+// A fresh install has no ~/TaxoneWatch and gets QueworkWatch as intended.
+function migrateLegacyWatchPath() {
+    if (store.get('_watchPathMigratedV1')) return false;
+
+    let migrated = false;
+    if (!store.get('watchPath') && fs.existsSync(LEGACY_DEFAULT_WATCH_PATH)) {
+        store.set('watchPath', LEGACY_DEFAULT_WATCH_PATH);
+        migrated = true;
+    }
+
+    store.set('_watchPathMigratedV1', true);
+    return migrated;
 }
 
 function getMoveAfterUpload() {
@@ -186,4 +212,4 @@ function moveToCancelled(filePath) {
     }
 }
 
-module.exports = { start, stop, getWatchPath, setWatchPath, getMoveAfterUpload, setMoveAfterUpload, moveToUploaded, moveToCancelled };
+module.exports = { start, stop, getWatchPath, setWatchPath, migrateLegacyWatchPath, getMoveAfterUpload, setMoveAfterUpload, moveToUploaded, moveToCancelled };

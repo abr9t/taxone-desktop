@@ -150,13 +150,17 @@ app.whenReady().then(async () => {
         appStore.set('hasLaunched', true);
     }
 
-    createTray();
-
-    // Re-point legacy installs still persisted against the old taxone.cpa
-    // host before anything reads serverUrl. One-time, guarded (see auth.js).
+    // Both migrations run before createTray(), which reads the watch path
+    // into the tray menu, and before anything reads serverUrl. One-time,
+    // guarded (see auth.js and watcher.js).
     if (auth.migrateLegacyHost()) {
         debugLog('[migration] Re-pointed persisted host taxone.cpa -> caputa.quework.app');
     }
+    if (watcher.migrateLegacyWatchPath()) {
+        debugLog('[migration] Pinned watch folder to the legacy ~/TaxoneWatch');
+    }
+
+    createTray();
 
     const token = await auth.getToken();
     const serverUrl = auth.getServerUrl();

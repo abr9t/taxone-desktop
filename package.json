@@ -5,7 +5,7 @@
   "description": "Quework Desktop Companion — watch folder file uploader",
   "main": "src/main.js",
   "scripts": {
-    "test": "node test/migrate-legacy-host.test.js",
+    "test": "node test/run-all.js",
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development electron .",
     "build": "electron-builder --win",
