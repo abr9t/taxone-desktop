@@ -31,11 +31,21 @@ const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-i
 const Store = require('electron-store');
 const appStore = new Store();
 
-// Debug log to file (Windows Electron doesn't pipe to terminal)
-const _debugLog = path.join(__dirname, '..', 'debug.log');
+// Debug log to file (Windows Electron doesn't pipe to terminal).
+//
+// Written to userData, not next to __dirname: in a packaged build __dirname
+// is inside app.asar, so appendFileSync there throws. The only caller is on
+// the legacy-host upgrade path, inside the whenReady handler — an exception
+// would reject that promise and take the rest of startup (tray, watcher,
+// upload queue) down with it, on exactly the installs this release targets.
+const _debugLog = path.join(app.getPath('userData'), 'debug.log');
 function debugLog(...args) {
     const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`;
-    fs.appendFileSync(_debugLog, line);
+    try {
+        fs.appendFileSync(_debugLog, line);
+    } catch {
+        // Logging must never be the thing that breaks startup.
+    }
     console.log(...args);
 }
 
