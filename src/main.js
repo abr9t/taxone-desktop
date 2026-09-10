@@ -98,13 +98,8 @@ async function confirmHostChange(nextUrl) {
         cancelId: 0,
         title: 'Change Quework server?',
         message: 'This link wants to point Quework Desktop at a different server.',
-        detail: `Currently connected to:
-${current}
-
-The link asks for:
-${nextUrl}
-
-`
+        detail: `Currently connected to:\n${current}\n\n`
+            + `The link asks for:\n${nextUrl}\n\n`
             + "Only continue if you started this from your own firm's Quework site.",
     });
     return response === 1;
@@ -116,9 +111,7 @@ async function applyServerUrlFromLink(rawUrl) {
     const result = auth.validateServerUrl(rawUrl);
     if (!result.ok) {
         debugLog(`[protocol] Rejected server URL: ${result.error}`);
-        dialog.showErrorBox('Quework Desktop', `This link was ignored.
-
-${result.error}`);
+        dialog.showErrorBox('Quework Desktop', `This link was ignored.\n\n${result.error}`);
         return null;
     }
     if (!(await confirmHostChange(result.url))) {
