@@ -2,7 +2,6 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, Notification } = require('electron');
 const path = require('path');
-const fs = require('fs');
 
 // ─── userData pin ─────────────────────────────────────────────────
 //
@@ -28,26 +27,9 @@ const watcher = require('./watcher');
 const uploader = require('./uploader');
 const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
+const { debugLog } = require('./debug-log');
 const Store = require('electron-store');
 const appStore = new Store();
-
-// Debug log to file (Windows Electron doesn't pipe to terminal).
-//
-// Written to userData, not next to __dirname: in a packaged build __dirname
-// is inside app.asar, so appendFileSync there throws. The only caller is on
-// the legacy-host upgrade path, inside the whenReady handler — an exception
-// would reject that promise and take the rest of startup (tray, watcher,
-// upload queue) down with it, on exactly the installs this release targets.
-const _debugLog = path.join(app.getPath('userData'), 'debug.log');
-function debugLog(...args) {
-    const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`;
-    try {
-        fs.appendFileSync(_debugLog, line);
-    } catch {
-        // Logging must never be the thing that breaks startup.
-    }
-    console.log(...args);
-}
 
 let tray = null;
 let trayMenu = null;
