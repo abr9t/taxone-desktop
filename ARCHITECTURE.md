@@ -65,7 +65,7 @@ Node.js built-in `crypto.randomUUID()` for IDs (no `uuid` package — ESM incomp
 - **Renderer processes are display-only** — communicate via IPC only
 - **`nodeIntegration: false`, `contextIsolation: true`** — separate preloads per window type
 - **App user model ID** — `com.taxone.desktop` (`app.setAppUserModelId`)
-- **First-launch auto-start** — on first run, `app.setLoginItemSettings({ openAtLogin: true })` and `hasLaunched` flag set in `appStore`
+- **First-launch auto-start** — on first run, `app.setLoginItemSettings({ openAtLogin: true, path: process.execPath })` and `hasLaunched` flag set in `appStore`. On every packaged launch, `reconcileAutoLaunch()` (`src/auto-launch.js`) repoints the Run-key entry if its recorded path has drifted — see [Autostart reconciliation](#autostart-reconciliation)
 - **App opens File Upload window on start** — `showMigrationTool()` called after successful auth verification
 - **Tray close notification** — first time the File Upload window is closed, a notification says the app is still running in the tray (`hasClosedUploadWindow` flag)
 
@@ -90,7 +90,7 @@ File Upload exposes `window.electronAPI.migration` namespace.
 - Sanctum personal access token with `desktop` ability scope
 - Token storage: OS keychain via keytar (`TaxOneDesktop` / `api-token`), falls back to `electron-store` `_token` key
 - Token always saved to both keychain and electron-store (store as fallback)
-- Server URL stored in `electron-store` (store name: `taxone-settings`), normalized (trailing slash stripped, `http://` forced to `https://` for non-localhost/non-`.test` URLs)
+- Server URL stored in `electron-store` (store name: `taxone-settings`). Every write goes through `auth.validateServerUrl()` — an allowlist, not a normalizer — see [Server URL validation](#server-url-validation). `saveServerUrl()` throws rather than storing a host that fails it
 - Token verified on app start via `GET /api/desktop/clients?search=&limit=1`
   - `'ok'` → proceed with cached credentials, open File Upload window
   - `'auth_error'` (401/403) → show login
@@ -100,7 +100,7 @@ File Upload exposes `window.electronAPI.migration` namespace.
 ### Login Methods
 
 **1. Browser OAuth flow (primary):**
-- User enters server URL → clicks "Sign in with Browser" → opens `{serverUrl}/desktop/authorize` in default browser via `shell.openExternal()`
+- User enters server URL → clicks "Sign in with Browser" → `auth:open-browser-sign-in` validates the URL, then opens `{canonicalUrl}/desktop/authorize` in the default browser via `shell.openExternal()`. The renderer never passes a full URL to be opened
 - Quework web app authenticates user, then redirects to `taxone-desktop://auth?token=X&url=Y`
 - Custom protocol registered via `app.setAsDefaultProtocolClient('taxone-desktop')` (with `process.execPath` arg in dev mode)
 - `handleAuthUrl()` parses URL, saves token + server URL, configures uploader, starts watching, inits migration queue, opens File Upload window
@@ -108,7 +108,7 @@ File Upload exposes `window.electronAPI.migration` namespace.
 - Shows "Successfully signed in" OS notification
 
 **2. `taxone-desktop://connect` handler:**
-- Web app can link to `taxone-desktop://connect?url=X` to pre-fill server URL via `auth.saveServerUrl()`
+- Web app can link to `taxone-desktop://connect?url=X` to pre-fill server URL. The URL goes through `applyServerUrlFromLink()` in `main.js`: validated, then — if the install is already paired with a different host — confirmed by a dialog before it is stored
 - If already signed in (token exists), opens File Upload window directly
 - If not signed in, opens login window (with server URL pre-filled)
 
@@ -139,7 +139,7 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 **`src/watcher.js`**
 
-- chokidar monitors configurable watch path (default: `~/QueworkWatch/`)
+- chokidar monitors configurable watch path (default for new installs: `~/QueworkWatch/`; installs upgraded from v1.1.5 keep `~/TaxoneWatch/` — see [Legacy watch folder migration](#legacy-watch-folder-migration))
 - `ignoreInitial: true`, `awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 200 }`, `depth: 5`
 - Ignores: hidden files (regex), `.tmp`, `.crdownload`, `~` suffix
 - `parseFileInfo()` also skips files in `Uploaded/` and `Cancelled/` subfolders (at any depth, case-insensitive, backslash-safe)
@@ -331,10 +331,10 @@ Three-tab interface: **Import**, **Queue**, **History**.
 | `settings:save` | invoke | Save watchPath + moveAfterUpload, restart watcher |
 | `settings:show-login` | invoke | Open login window from settings |
 | `settings:get-auto-launch` | invoke | Return `app.getLoginItemSettings().openAtLogin` |
-| `settings:set-auto-launch` | invoke | Set `app.setLoginItemSettings({ openAtLogin })` |
+| `settings:set-auto-launch` | invoke | Set `app.setLoginItemSettings({ openAtLogin, path: process.execPath })` |
 | `settings:browse-folder` | invoke | Native folder picker dialog |
 | `get-server-url` | invoke | Return stored server URL |
-| `open-external` | invoke | Open URL in default browser via `shell.openExternal()` |
+| `auth:open-browser-sign-in` | invoke | Validate a server URL, then open `{canonicalUrl}/desktop/authorize` in the default browser. Returns `{success, error}` |
 
 ### Clients & Upload (registered in `main.js`)
 
@@ -387,6 +387,119 @@ Three-tab interface: **Import**, **Queue**, **History**.
 
 ---
 
+## Identifiers vs. Branding
+
+The v1.1.5 → v1.2.0 rebrand renamed the *display* name from TaxOne to Quework.
+Three strings look like branding and are not: they are identifiers that other
+things resolve against. Renaming any of them breaks something silently, with no
+build error and no failing test.
+
+### The userData pin
+
+`main.js` pins `userData` before any `require()` that can construct a store:
+
+```js
+const USER_DATA_DIR = 'TaxOne Desktop';
+app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR));
+```
+
+**`"TaxOne Desktop"` here is an identifier, not branding. Do not change it to
+match the display name.** It is the directory every existing install keeps its
+`serverUrl`, watch folder, token fallback and upload queue in.
+
+Electron derives `userData` from `productName`, and electron-store resolves its
+directory once, at construction time, from `app.getPath('userData')`. Every store
+in this app — `auth.js`, `watcher.js`, `migration.js`, the `appStore` in
+`main.js` — is constructed at module load, which is why the pin has to sit above
+the requires rather than next to `app.setName()`.
+
+Without it, renaming `productName` points the app at a fresh, empty
+`%APPDATA%\Quework Desktop`: the legacy-host migration finds nothing to migrate
+and every user lands on the login screen with their queue gone. The failure is
+silent, so `auth.js` carries a tripwire that compares the resolved directory
+against the expected one — it throws in an unpackaged build and writes to
+`debug.log` via `debugError` in a packaged one.
+
+### The installer filename
+
+`electron-builder.yml` sets `artifactName: "TaxOne-Desktop-Setup.${ext}"`.
+
+The web app links straight at that filename: `routes/web.php:540` in
+`abr9t/taxone` points the download button at
+`releases/latest/download/TaxOne-Desktop-Setup.exe`. Renaming the artifact 404s
+that button the moment a release is tagged. If it ever has to change, both repos
+ship in the same release.
+
+### The AppUserModelId
+
+`com.taxone.desktop`, set by `app.setAppUserModelId()` and also used as `appId`.
+Two things resolve against it:
+
+- The **uninstall registry key** is a UUIDv5 of `appId`
+  (`fb2f6324-7194-5753-aa0e-d1c9da0ecd6e`). Unchanged, so NSIS upgrades in place
+  rather than leaving a second Apps & Features entry beside the old one.
+- The **Run-key value name** for autostart defaults to it — see below.
+
+### Autostart reconciliation
+
+`src/auto-launch.js`. `productName` drives the executable name and the install
+directory, so the rebrand moves the exe from
+`%LOCALAPPDATA%\Programs\TaxOne Desktop\TaxOne Desktop.exe` to
+`...\Quework Desktop\Quework Desktop.exe`. The Run-key entry recording that
+absolute path does not move with it, and because the app only enables autostart
+once (behind `hasLaunched`) it never re-registers. The entry survives the upgrade
+pointing at an executable the installer removed, and the app silently stops
+starting at login.
+
+`reconcileAutoLaunch()` runs on every packaged launch and rewrites the path when
+it has drifted — but only when an entry already exists, since someone who turned
+autostart off in Settings has none and resurrecting it would be worse than a
+stale path. It carries `entry.enabled` through, so an entry disabled in Task
+Manager stays disabled: `setLoginItemSettings` defaults `enabled` to `true`.
+
+### Debug log location
+
+`src/debug-log.js` writes to `{userData}\debug.log`, resolved lazily on first
+write. Not next to `__dirname`: in a packaged build that is inside `app.asar`,
+where `appendFileSync` throws. Writes are wrapped in try/catch — logging must
+never be the thing that breaks startup, and the callers are on the upgrade path
+inside the `whenReady` handler, where a throw would take the tray, the watcher
+and the upload queue with it.
+
+`debugLog` writes to the file and stdout; `debugError` writes to the file and
+stderr.
+
+### Server URL validation
+
+`auth.validateServerUrl()` is the single gate every `serverUrl` passes before it
+is persisted, used by all three writers: the `connect` handler, the `auth`
+handler, and `auth:login`.
+
+`taxone-desktop://` is a protocol anyone can put behind a link, the repo is
+public, and the stored host is where the app sends its bearer token on the next
+launch — `uploader.configure(serverUrl, token)` runs unprompted from
+`whenReady`. An unvalidated `url=` parameter is therefore a one-click token
+exfiltration primitive.
+
+The rule is an allowlist:
+
+| Input | Result |
+|-------|--------|
+| `https://<single-label>.quework.app` | accepted, canonicalized to the origin |
+| `https://taxone.cpa`, `https://www.taxone.cpa` | mapped to `https://caputa.quework.app` (same rule as the migration) |
+| `localhost` / `*.test` | accepted **only** when `!app.isPackaged`; port preserved |
+| anything with userinfo (`https://host@evil.com`) | rejected |
+| anything with an explicit port on a Quework host | rejected — canonicalization would drop it silently |
+| any other host, scheme, or multi-label subdomain | rejected |
+
+`auth:login` validates **before** `verifyTokenWith()`, because that call sends
+the token to the host. The `auth` handler persists the host before the token, so
+a token arriving with a rejected host is never written. A link that would move an
+already-configured install to a different server raises a confirmation dialog
+first — a valid Quework URL is still some other firm's.
+
+---
+
 ## electron-store Schemas
 
 ### Default store (no name — `main.js`)
@@ -405,12 +518,15 @@ Used by `auth.js` and `watcher.js`.
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
 | `serverUrl` | string | `''` | Quework server URL |
-| `watchPath` | string | `~/QueworkWatch/` | Watch folder path |
+| `watchPath` | string | `~/QueworkWatch/` | Watch folder path. Not written on first run — `getWatchPath()` falls back to the default instead of persisting it |
 | `moveAfterUpload` | boolean | `true` | Move files to Uploaded/ subfolder |
 | `_token` | string | `null` | API token (fallback when keytar unavailable) |
 | `_hostMigratedV1` | boolean | `undefined` | Guard flag: legacy-host migration has run once |
+| `_watchPathMigratedV1` | boolean | `undefined` | Guard flag: legacy watch folder migration has run once |
 
-**Legacy-host migration** — `auth.migrateLegacyHost()` runs once at startup (`main.js`, `app.whenReady`, before `serverUrl` is read). Because electron-store lives in `userData` and survives installer updates, existing installs keep their persisted `serverUrl`; this step rewrites an exact-hostname match on `taxone.cpa` / `www.taxone.cpa` to `https://caputa.quework.app`, then sets `_hostMigratedV1` so it never runs again. Deliberately single-firm and exact-match — it must be retired before multi-tenant subdomains land, not generalized.
+**Legacy-host migration** — `auth.migrateLegacyHost()` runs once at startup (`main.js`, `app.whenReady`, before `serverUrl` is read), wrapped in its own try/catch so a store failure costs the migration and not the tray. electron-store lives in `userData` and survives installer updates — but only because `userData` is pinned; see [The userData pin](#the-userdata-pin), without which this migration finds an empty store and silently does nothing. This step rewrites an exact-hostname match on `taxone.cpa` / `www.taxone.cpa` to `https://caputa.quework.app`, then sets `_hostMigratedV1` so it never runs again. Deliberately single-firm and exact-match — it must be retired before multi-tenant subdomains land, not generalized.
+
+**Legacy watch folder migration** — `watcher.migrateLegacyWatchPath()` runs once at startup, immediately after the host migration and before `createTray()`. `watchPath` is never written on first run, so an install whose owner never opened Settings has no stored value for the `userData` pin to preserve — renaming the default from `~/TaxoneWatch` to `~/QueworkWatch` would silently move it. When `watchPath` is unset **and** `~/TaxoneWatch` exists on disk, the legacy path is persisted; a fresh install has no such folder and keeps `~/QueworkWatch`. Sets `_watchPathMigratedV1`.
 
 ### Migration queue store (`migration-queue`)
 
@@ -486,7 +602,9 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 
 - **electron-builder** with NSIS installer for Windows
 - Desktop + Start Menu shortcuts, custom installer icon
-- `appId: com.taxone.desktop`
+- `appId: com.taxone.desktop` — unchanged by the rebrand; see [The AppUserModelId](#the-appusermodelid)
+- `artifactName: TaxOne-Desktop-Setup.${ext}` — an identifier, coupled to `routes/web.php:540` in `abr9t/taxone`; see [The installer filename](#the-installer-filename)
+- `productName: Quework Desktop` — drives the executable name (`Quework Desktop.exe`) and the per-user install directory (`%LOCALAPPDATA%ProgramsQuework Desktop`), but **not** `userData`; see [The userData pin](#the-userdata-pin)
 - Custom protocol `taxone-desktop://` registered in `electron-builder.yml` under `protocols`
 - Icon: `assets/icon.ico` (installer + NSIS), `assets/icon.png` (app window)
 - Files included: `src/**/*`, `assets/**/*`, `node_modules/**/*`, `package.json`
@@ -506,6 +624,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 |--------|---------|
 | `start` | `electron .` |
 | `dev` | `cross-env NODE_ENV=development electron .` |
+| `test` | `node test/run-all.js` |
 | `build` | `electron-builder --win` |
 | `build:dir` | `electron-builder --win --dir` |
 | `build:win` | `electron-builder --win` |
@@ -538,7 +657,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | Auto-start queue on enqueue | Eliminates extra manual step — `enqueue()` calls `start()` automatically |
 | Batch counters reset per start | Completion notification shows per-run results, not cumulative totals |
 | `NODE_TLS_REJECT_UNAUTHORIZED = '0'` | Allows connections to servers with self-signed certificates |
-| HTTPS enforcement in `saveServerUrl` | Forces `https://` for non-localhost/non-`.test` URLs |
+| Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `taxone-desktop://` is a protocol anyone can link to |
 | Auth-changed event propagation | Single source of truth for auth state across all windows |
 
 ---
@@ -556,8 +675,10 @@ taxone-desktop/
 │   ├── icon.svg                  # App icon source
 │   └── tray-icon.png             # System tray icon
 ├── src/
-│   ├── main.js                   # App entry — lifecycle, tray, windows, IPC handlers, queue init, protocol handler, TLS config
-│   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL, HTTPS enforcement
+│   ├── main.js                   # App entry — userData pin, lifecycle, tray, windows, IPC handlers, queue init, protocol handler, TLS config
+│   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL allowlist, legacy-host migration, userData tripwire
+│   ├── auto-launch.js            # Run-key reconciliation after the executable rename
+│   ├── debug-log.js              # Shared {userData}debug.log writer (debugLog / debugError)
 │   ├── watcher.js                # chokidar watch folder, file parsing, move-to-Uploaded/Cancelled
 │   ├── uploader.js               # Axios API client — search, folders, upload, token verification
 │   ├── migration.js              # MigrationQueue class — persistent queue engine, client matching, scanning, throttling
@@ -569,7 +690,15 @@ taxone-desktop/
 │       ├── settings.html         # Watch folder config, connection status, auto-launch toggle, sign in/out
 │       ├── confirm-upload.html   # Per-file upload: rename, client search, folder browser, cancel
 │       └── migration.html        # File upload tool: import/queue/history tabs, auth guards, Excel export, drop overlay
-├── electron-builder.yml          # Build config — NSIS, protocol registration, icons
+├── test/
+│   ├── run-all.js                # Runs every *.test.js, one process each (the suites stub Module._load)
+│   ├── auto-launch.test.js       # Run-key reconciliation, including the Task-Manager-disabled case
+│   ├── migrate-legacy-host.test.js   # taxone.cpa -> caputa.quework.app, guard, idempotence
+│   ├── migrate-watch-path.test.js    # ~/TaxoneWatch pinning vs. fresh installs
+│   ├── userdata-tripwire.test.js     # Tripwire throws unpackaged, records packaged
+│   └── validate-server-url.test.js   # Server URL allowlist and its counterfactuals
+├── electron-builder.yml          # Build config — NSIS, protocol registration, icons, artifactName
 ├── package.json                  # Dependencies & scripts
+├── UPGRADE-TEST.md               # Manual upgrade checklist — the merge gate for v1.2.0
 └── ARCHITECTURE.md               # This file
 ```
