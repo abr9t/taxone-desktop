@@ -180,16 +180,35 @@ app.whenReady().then(async () => {
 
     reconcileAutoLaunch();
 
-    // Both migrations run before createTray(), which reads the watch path
-    // into the tray menu, and before anything reads serverUrl. One-time,
-    // guarded (see auth.js and watcher.js).
-    if (auth.migrateLegacyHost()) {
-        debugLog('[migration] Re-pointed persisted host taxone.cpa -> caputa.quework.app');
-    }
-    if (watcher.migrateLegacyWatchPath()) {
-        debugLog('[migration] Pinned watch folder to the legacy ~/TaxoneWatch');
+    // Both migrations are one-time and guarded (see auth.js and watcher.js),
+    // and each is wrapped on its own. They write to electron-store, which
+    // touches the disk and can fail — a locked file, a full volume, a
+    // corrupted JSON. A throw here would reject the whenReady promise and
+    // take the tray, the watcher and the upload queue with it, which is far
+    // worse than an un-migrated setting. Separate blocks so a failed host
+    // migration does not also skip the watch folder one.
+    try {
+        if (auth.migrateLegacyHost()) {
+            debugLog('[migration] Re-pointed persisted host taxone.cpa -> caputa.quework.app');
+        }
+    } catch (err) {
+        debugLog(`[migration] Host migration failed, leaving serverUrl alone: ${err.message}`);
     }
 
+    try {
+        if (watcher.migrateLegacyWatchPath()) {
+            debugLog('[migration] Pinned watch folder to the legacy ~/TaxoneWatch');
+        }
+    } catch (err) {
+        debugLog(`[migration] Watch folder migration failed, leaving watchPath alone: ${err.message}`);
+    }
+
+    // After the migrations, not before: createTray() renders the watch path
+    // into the tray menu, and on an install that is not signed in nothing
+    // rebuilds that menu afterwards — startWatching() is what normally calls
+    // updateTrayMenu() again, and it never runs. Creating the tray first
+    // would leave such a user looking at ~/QueworkWatch while the app
+    // actually watches ~/TaxoneWatch.
     createTray();
 
     const token = await auth.getToken();
