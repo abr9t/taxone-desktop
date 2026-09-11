@@ -71,11 +71,22 @@ rejects('https://caputa.quework.app.evil.com');       // suffix lookalike
 rejects('https://evil.com/?x=caputa.quework.app');    // trusted host in the query string
 rejects('https://caputa.quework.app@evil.com');       // userinfo trick — the host is evil.com
 rejects('https://caputa.quework.app:pass@evil.com');  // userinfo with a password
+rejects('https://user@caputa.quework.app');           // userinfo on a host that IS ours
+rejects('https://ca_puta.quework.app');               // underscore is not a hostname character
+rejects('https://-caputa.quework.app');               // a label cannot start with a hyphen
 rejects('http://caputa.quework.app');                 // right host, wrong scheme
 rejects('https://a.b.quework.app');                   // two-label subdomain
 rejects('https://quework.app');                       // the apex is not a firm
 rejects('http://localhost:8000', PACKAGED);           // dev host in a packaged build
 rejects('https://quework.test', PACKAGED);            // .test host in a packaged build
+
+// A port is dropped by the canonicalisation, so accepting one would mean the
+// allowlist silently passed something it never checked.
+rejects('https://caputa.quework.app:8443');
+rejects('https://taxone.cpa:8443');
+rejects('https://caputa.quework.app:80');
+// Ports the scheme implies are not explicit — new URL() normalises them away.
+accepts('https://caputa.quework.app:443', NEW);
 
 // ─── Rejected: everything else ────────────────────────────────────
 rejects('https://evil.com');
