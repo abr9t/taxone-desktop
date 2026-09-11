@@ -1,26 +1,45 @@
 const path = require('path');
 const Store = require('electron-store');
+const { debugError } = require('./debug-log');
 
 const store = new Store({ name: 'taxone-settings' });
 
 // Tripwire for the userData pin in main.js. The Store above has already
 // resolved its directory: if the pin did not run first, it resolved to the
 // productName-derived folder, this install looks brand new, and there is
-// nothing for migrateLegacyHost() below to find. That failure is otherwise
-// completely silent, so make noise about it here.
+// nothing for migrateLegacyHost() below to find. The symptom is
+// indistinguishable from a fresh install, so it has to announce itself.
 const EXPECTED_USER_DATA_DIR = 'TaxOne Desktop';
+
+// Only the lookup goes in the try — it legitimately fails when this module is
+// required outside Electron, as the unit tests do. The comparison stays
+// outside it: a bug in the check itself must not be swallowed by the same
+// catch that tolerates a missing runtime.
+let actualUserDataDir = null;
+let runningPackaged = true;
 try {
-    const actual = require('electron').app.getPath('userData');
-    if (path.basename(actual) !== EXPECTED_USER_DATA_DIR) {
-        console.error(
-            `[auth] userData resolved to "${actual}" but must be pinned to ` +
-            `"${EXPECTED_USER_DATA_DIR}" — every existing install's settings and ` +
-            'upload queue live there. Check that main.js calls ' +
-            "app.setPath('userData', ...) before it requires this module."
-        );
-    }
+    const { app } = require('electron');
+    actualUserDataDir = app.getPath('userData');
+    runningPackaged = app.isPackaged;
 } catch {
     // Not running under Electron (unit tests) — nothing to check.
+}
+
+if (actualUserDataDir !== null && path.basename(actualUserDataDir) !== EXPECTED_USER_DATA_DIR) {
+    const message = `[auth] userData resolved to "${actualUserDataDir}" but must be pinned `
+        + `to "${EXPECTED_USER_DATA_DIR}" — every existing install's settings and upload `
+        + "queue live there. Check that main.js calls app.setPath('userData', ...) before "
+        + 'it requires this module.';
+
+    if (!runningPackaged) {
+        // Unpackaged: fail at the desk of whoever changed the require order,
+        // while it is still cheap.
+        throw new Error(message);
+    }
+    // Packaged: never throw — a user's app has to start. But debugError puts
+    // it in debug.log as well as on stderr, so a bypass that reaches a real
+    // install leaves a record instead of just an empty-looking config.
+    debugError(message);
 }
 
 const SERVICE_NAME = 'TaxOneDesktop';
