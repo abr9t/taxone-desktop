@@ -28,6 +28,7 @@ const uploader = require('./uploader');
 const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
 const { debugLog } = require('./debug-log');
+const { reconcileAutoLaunch, AUTO_LAUNCH_ENTRY_NAME } = require('./auto-launch');
 const Store = require('electron-store');
 const appStore = new Store();
 
@@ -166,8 +167,7 @@ async function handleAuthUrl(url) {
 app.setName('Quework Desktop');
 
 // Also the registry value name Electron writes the autostart entry under —
-// see reconcileAutoLaunch(). Unchanged by the rebrand, deliberately.
-const AUTO_LAUNCH_ENTRY_NAME = 'com.taxone.desktop';
+// see src/auto-launch.js, which owns the constant.
 app.setAppUserModelId(AUTO_LAUNCH_ENTRY_NAME);
 
 app.whenReady().then(async () => {
@@ -209,37 +209,6 @@ app.whenReady().then(async () => {
         }
     }
 });
-
-// productName drives the executable name and the install directory, so the
-// rebrand moves the exe — but the Run-key entry recording its absolute path
-// does not move with it. Electron writes that entry under the
-// AppUserModelId, which is unchanged (com.taxone.desktop), so it survives
-// the upgrade pointing at an executable the installer has just removed.
-//
-// Re-assert it whenever the recorded path has drifted. Only when an entry
-// already exists: someone who turned autostart off in Settings has none, and
-// resurrecting it would be worse than the stale path.
-function reconcileAutoLaunch() {
-    if (!app.isPackaged) return;
-
-    try {
-        const settings = app.getLoginItemSettings();
-        const entry = (settings.launchItems || []).find(item => item.name === AUTO_LAUNCH_ENTRY_NAME);
-        if (!entry && !settings.openAtLogin) return;
-
-        const registered = entry ? entry.path : '';
-        if (!registered || samePath(registered, process.execPath)) return;
-
-        app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
-        debugLog(`[autostart] Re-registered: ${registered} -> ${process.execPath}`);
-    } catch (err) {
-        debugLog(`[autostart] Reconcile failed: ${err.message}`);
-    }
-}
-
-function samePath(a, b) {
-    return path.normalize(a).toLowerCase() === path.normalize(b).toLowerCase();
-}
 
 app.on('window-all-closed', (e) => {
     e.preventDefault();
