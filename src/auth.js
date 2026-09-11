@@ -181,6 +181,17 @@ function validateServerUrl(input, opts = {}) {
     }
 
     const host = parsed.hostname.toLowerCase();
+    const isDevHost = host === 'localhost' || host.endsWith('.test');
+
+    // The canonicalisation below rebuilds the URL from the hostname alone, so
+    // a port would be silently dropped — the allowlist would appear to accept
+    // something it never looked at, and https://caputa.quework.app:8443 would
+    // come back as the plain origin. Reject it instead, so the rule means
+    // exactly what it says. A dev server is the one place a port is load
+    // bearing, and it is preserved there.
+    if (parsed.port !== '' && !isDevHost) {
+        return { ok: false, error: `A Quework URL does not carry a port: ${parsed.host}` };
+    }
 
     // Same rewrite as migrateLegacyHost(), for links and hand-typed URLs
     // rather than persisted settings. The result is a fixed constant, so
@@ -189,7 +200,7 @@ function validateServerUrl(input, opts = {}) {
         return { ok: true, url: MIGRATED_HOST };
     }
 
-    if (host === 'localhost' || host.endsWith('.test')) {
+    if (isDevHost) {
         if (!allowDevHosts) {
             return { ok: false, error: `Development servers are not allowed in a released build: ${host}` };
         }
