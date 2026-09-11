@@ -41,9 +41,7 @@ nothing. Restore from the backup if that happens.
 3. Open **Settings** and set a watch folder. Use `C:\Users\<you>\TaxoneWatch`
    for the default-folder path, or a folder of your own to test the
    explicit-choice path. Note which you chose.
-4. Drop a file in the watch folder and leave it **unconfirmed**, so something
-   is sitting in the queue.
-5. Record the baseline:
+4. Record the baseline:
 
 ```
 type "%APPDATA%\TaxOne Desktop\taxone-settings.json"
@@ -55,6 +53,17 @@ dir "%LOCALAPPDATA%\Programs\TaxOne Desktop"
 Expected: `serverUrl` is `https://taxone.cpa`; the Run entry and the protocol
 command both point at `...\TaxOne Desktop\TaxOne Desktop.exe`.
 
+5. Record the queue counts. **Write these two numbers down** — step 3
+   compares against them. Do not create a pending file to test with: the
+   fixture already carries a real queue, and a deliberately unconfirmed file
+   adds nothing but a way to lose one.
+
+```powershell
+$q = Get-Content "$env:APPDATA\TaxOne Desktop\migration-queue.json" -Raw | ConvertFrom-Json
+"files:   $($q.files.Length)"
+"history: $($q.history.Length)"
+```
+
 6. **Quit the app from the tray** before upgrading. Do not just close windows —
    the queue is flushed on `before-quit`.
 
@@ -62,8 +71,29 @@ command both point at `...\TaxOne Desktop\TaxOne Desktop.exe`.
 
 ## 2. Upgrade in place
 
-Run `dist\TaxOne-Desktop-Setup.exe` from this branch over the top. Do not
-uninstall first — an in-place upgrade is what is being tested.
+Run the installer built from this branch over the top. Do not uninstall
+first — an in-place upgrade is what is being tested.
+
+```
+C:\Users\aburszczyk\Projects\taxone-desktop\.claude\worktrees\phase-2-report-contradictions-e70c2f\dist\TaxOne-Desktop-Setup.exe
+```
+
+Verify you are running the right binary before you start — a stale one from
+an earlier build invalidates everything below:
+
+```powershell
+Get-FileHash "<path above>" -Algorithm SHA256
+```
+
+| | |
+|---|---|
+| SHA256 | `6656CC520145A2C4A85AA02EA3DFBDA570046CE43EF0895DB563D732153904EC` |
+| Size | 84,637,546 bytes |
+| Version resource | Quework Desktop 1.2.0, Quework LLC |
+| Built from | `c419ac4` — the last commit that changes anything the installer packs |
+
+Unsigned, so SmartScreen will warn on launch. That is unchanged from v1.1.5
+and not a finding.
 
 ---
 
@@ -79,10 +109,16 @@ uninstall first — an in-place upgrade is what is being tested.
       If you used the default, `watchPath` is now persisted as
       `C:\Users\<you>\TaxoneWatch` with `_watchPathMigratedV1` = true.
       `~\QueworkWatch` was not created and is not being watched.
-- [ ] The pending file from step 1.4 is still in the queue.
+- [ ] The queue counts match the two numbers from step 1.5 — same command,
+      same `files` and `history` lengths. Then open the **File Upload** window
+      and confirm the **Queue** and **History** tabs show those same counts, so
+      the store on disk and what the app renders agree.
 - [ ] `%APPDATA%\TaxOne Desktop\debug.log` exists and contains the
       `[migration] Re-pointed persisted host` line. Its absence means the
       migration did not run — that is a failure, not a logging nit.
+- [ ] `debug.log` contains **no** `[auth] userData resolved to` line. That is
+      the tripwire: if it fired, the pin was bypassed and every check above
+      passed for the wrong reason.
 
 ### Upgraded in place, not alongside
 
@@ -108,6 +144,27 @@ uninstall first — an in-place upgrade is what is being tested.
       by `reconcileAutoLaunch()` **on launch**, so run the app once before
       checking. If the path is still `TaxOne Desktop`, the `launchItems` lookup
       did not find the entry — report it rather than editing the registry.
+
+- [ ] `debug.log` contains **at most one** `[autostart] Re-registered` line
+      after launching the app twice.
+
+```powershell
+Select-String -Path "$env:APPDATA\TaxOne Desktop\debug.log" -Pattern "autostart"
+```
+
+      One line on the first launch after the upgrade is correct. A second line
+      on the second launch means the path comparison never matches and the
+      registry is being rewritten on every start. The likeliest cause is
+      quoting: the Run value is stored as `"C:\...\app.exe"`, and if the
+      quotes come back as part of `entry.path` they will never equal
+      `process.execPath`. Report it — do not paper over it by stripping quotes
+      in `samePath()`, because that would also hide a genuine mismatch.
+
+- [ ] *Optional, if you want to exercise the Task Manager path:* before
+      upgrading, disable the `com.taxone.desktop` entry under Task Manager →
+      Startup apps. After the upgrade it must still be listed as **Disabled**,
+      with the path updated. Re-registering an entry without carrying its
+      enabled state through silently turns autostart back on.
 
 ### Function
 
