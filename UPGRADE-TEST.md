@@ -101,7 +101,13 @@ and not a finding.
 
 ### Config survived — the whole point of the release
 
-- [ ] `%APPDATA%\Quework Desktop` **does not exist**.
+- [ ] After upgrading, check `%APPDATA%\Quework Desktop`.
+      - **PASS:** it doesn't exist, or it contains only Electron-internal
+        folders (e.g. `Crashpad`) and none of: `taxone-settings.json`,
+        `migration-queue.json`, `debug.log`.
+      - **FAIL:** any of those three files exists. The pin was bypassed. If
+        `debug.log` exists, a `[auth] userData resolved to` line in it
+        confirms this. **Stop the test and report.**
 - [ ] `type "%APPDATA%\TaxOne Desktop\taxone-settings.json"` shows
       `serverUrl` = `https://caputa.quework.app` and `_hostMigratedV1` = true.
 - [ ] The app came up **signed in**. No login window, no re-pair.
@@ -116,9 +122,6 @@ and not a finding.
 - [ ] `%APPDATA%\TaxOne Desktop\debug.log` exists and contains the
       `[migration] Re-pointed persisted host` line. Its absence means the
       migration did not run — that is a failure, not a logging nit.
-- [ ] `debug.log` contains **no** `[auth] userData resolved to` line. That is
-      the tripwire: if it fired, the pin was bypassed and every check above
-      passed for the wrong reason.
 
 ### Upgraded in place, not alongside
 
