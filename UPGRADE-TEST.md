@@ -15,19 +15,46 @@ migration is supposed to repair lives on the far side of it.
 
 ---
 
-## 0. Back up the fixture first
+## 0. Restore the fixture — mandatory
 
-`%APPDATA%\TaxOne Desktop` on the dev machine is already a pristine legacy
-install: `serverUrl=https://taxone.cpa`, `watchPath=C:\Users\<you>\TaxoneWatch`,
-a real token, and a ~20 MB `migration-queue.json`.
+`%APPDATA%\TaxOne Desktop` on the dev machine is **no longer** a legacy
+install. The previous upgrade test migrated it: `serverUrl` is now
+`https://caputa.quework.app`, `_hostMigratedV1` is set, and `debug.log` holds
+lines from earlier builds. A test run against it proves nothing, so restoring
+from the backup is mandatory, not a fallback.
 
+The backup at `%USERPROFILE%\Desktop\taxone-fixture-backup` is the pristine
+v1.1.5 fixture: `serverUrl=https://taxone.cpa`,
+`watchPath=C:\Users\<you>\TaxoneWatch`, a real token, a ~20 MB
+`migration-queue.json`, no migration guard flags, and **no `debug.log`**.
+
+A correct fixture has no `debug.log`. v1.1.5 never writes one: its `debugLog()`
+was defined but never called. Any `debug.log` in the fixture came from a newer
+build, and would let the log checks in step 3 pass on lines that build wrote,
+so the restore deletes it.
+
+Quit the app from the tray first, then:
+
+```powershell
+$ud  = "$env:APPDATA\TaxOne Desktop"
+$bak = "$env:USERPROFILE\Desktop\taxone-fixture-backup"
+if (-not (Test-Path -LiteralPath "$bak\taxone-settings.json")) { throw "STOP: no fixture backup at $bak" }
+if (Get-Process 'Quework Desktop', 'TaxOne Desktop' -ErrorAction SilentlyContinue) { throw 'STOP: quit the app from the tray first' }
+if (Test-Path -LiteralPath $ud) { Remove-Item -LiteralPath $ud -Recurse -Force }
+Copy-Item -LiteralPath $bak -Destination $ud -Recurse
+Remove-Item -LiteralPath "$ud\debug.log" -Force -ErrorAction SilentlyContinue
+$s = Get-Content "$ud\taxone-settings.json" -Raw | ConvertFrom-Json
+"serverUrl:         $($s.serverUrl)"
+"_hostMigratedV1:   $($s._hostMigratedV1)"
+"debug.log present: $(Test-Path -LiteralPath "$ud\debug.log")"
 ```
-xcopy "%APPDATA%\TaxOne Desktop" "%USERPROFILE%\Desktop\taxone-userdata-backup" /E /I /H
-```
+
+Expected: `serverUrl` is `https://taxone.cpa`, `_hostMigratedV1` is empty, and
+`debug.log present` is `False`. Anything else: stop.
 
 **Do not launch a dev build (`npm start`) before the test.** It runs the same
-migrations, sets `_hostMigratedV1`, and turns step 5 into a no-op that proves
-nothing. Restore from the backup if that happens.
+migrations, sets `_hostMigratedV1`, writes `debug.log`, and turns step 3 into a
+no-op that proves nothing. Run this step again if that happens.
 
 ---
 
@@ -134,6 +161,34 @@ Get-FileHash "<path above>" -Algorithm SHA256
 Unsigned, so SmartScreen will warn on launch. That is unchanged from v1.1.5
 and not a finding.
 
+**Before you run it, record the log baseline.** The installer's finish page
+launches the app by default (electron-builder's `runAfterFinish`), so the
+first launch — and the migration it performs — happens the moment you click
+Finish. This cannot wait until after installing. Step 3 reads the file this
+writes; the counts are not kept in the shell, so the two halves cannot be
+pasted together and pass by construction.
+
+```powershell
+$log = "$env:APPDATA\TaxOne Desktop\debug.log"
+$bf  = "$env:TEMP\quework-upgrade-log-baseline.json"
+Remove-Item -LiteralPath $bf -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $log) {
+    'STOP: debug.log already exists, so the fixture is not clean. Run step 0 again. No baseline written.'
+} else {
+    # debug.log does not exist, so neither line can have been written yet.
+    $baseline = [ordered]@{
+        autostart = 0
+        migration = 0
+        recorded  = (Get-Date).ToString('o')
+    }
+    $baseline | ConvertTo-Json | Set-Content -LiteralPath $bf
+    "baseline written to $bf"
+    $baseline
+}
+```
+
+Expected: `baseline written`, with both counts `0`. Then run the installer.
+
 ---
 
 ## 3. Checks
@@ -158,9 +213,25 @@ and not a finding.
       same `files` and `history` lengths. Then open the **File Upload** window
       and confirm the **Queue** and **History** tabs show those same counts, so
       the store on disk and what the app renders agree.
-- [ ] `%APPDATA%\TaxOne Desktop\debug.log` exists and contains the
-      `[migration] Re-pointed persisted host` line. Its absence means the
-      migration did not run — that is a failure, not a logging nit.
+- [ ] `debug.log` gained **exactly one** `[migration] Re-pointed persisted host`
+      line since the step 2 baseline. `debug.log` is append-only and survives
+      upgrades, so a line being present proves nothing on its own; only a new
+      one does. Exactly one, because the migration is guarded and must not
+      repeat on later launches. (The settings-file check above proves the
+      migration's result; this proves this build performed it, once.)
+
+```powershell
+$bf = "$env:TEMP\quework-upgrade-log-baseline.json"
+if (-not (Test-Path -LiteralPath $bf)) { 'FAIL: no baseline file. Run the step 2 block before the installer.' }
+else {
+    $before = (Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json).migration
+    $log    = "$env:APPDATA\TaxOne Desktop\debug.log"
+    $lines  = @(if (Test-Path -LiteralPath $log) { Select-String -LiteralPath $log -Pattern '[migration] Re-pointed persisted host' -SimpleMatch })
+    $new    = $lines.Count - $before
+    if ($new -eq 1) { 'PASS' } else { "FAIL: $new new line(s), expected exactly 1" }
+    $lines | Select-Object -Skip $before | ForEach-Object { $_.Line }
+}
+```
 
 ### Upgraded in place, not alongside
 
@@ -176,8 +247,8 @@ $key = Get-ItemProperty "$un\fb2f6324-7194-5753-aa0e-d1c9da0ecd6e" -ErrorAction 
 # 1. The uninstall key is unchanged.
 if ($key) { "1 PASS: key present, DisplayName = $($key.DisplayName)" } else { '1 FAIL: key fb2f6324-... is missing' }
 
-# 2. Exactly one *Desktop* entry, and it is Quework Desktop 1.2.0.
-$m = @(Get-ChildItem $un | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like '*Desktop*' })
+# 2. Exactly one TaxOne/Quework entry, and it is Quework Desktop 1.2.0.
+$m = @(Get-ChildItem $un | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -match 'TaxOne|Quework' })
 $m | ForEach-Object { "   $($_.PSChildName)  $($_.DisplayName)" }
 if ($m.Count -eq 1 -and $m[0].DisplayName -eq 'Quework Desktop 1.2.0') { '2 PASS' } else { "2 FAIL: $($m.Count) match(es), listed above" }
 
@@ -190,10 +261,9 @@ if ($key.UninstallString -match '^"?(.+?\.exe)"?') {
 } else { "3 FAIL: cannot parse UninstallString: $($key.UninstallString)" }
 ```
 
-      All three must PASS. For check 2, read the listed matches before calling
-      it a failure: `*Desktop*` also matches unrelated apps such as GitHub
-      Desktop. The failure that matters is any `TaxOne` or `Quework` entry
-      other than the `fb2f6324-...` key.
+      All three must PASS. Check 2 filters on `TaxOne|Quework`, so an
+      unrelated app with "Desktop" in its name (GitHub Desktop, Docker
+      Desktop) cannot make the printed verdict wrong.
 
       (Both installers derive `fb2f6324-7194-5753-aa0e-d1c9da0ecd6e` as a
       UUIDv5 of the unchanged `appId: com.taxone.desktop`. That is why the
@@ -247,19 +317,24 @@ else { 'FAIL: no exe at that path' }
 
 - [ ] `debug.log` gains **no** `[autostart]` line from this build. A successful
       re-registration is not logged, so any new `[autostart]` line is a
-      failure. `debug.log` is append-only and survives upgrades, so it may
-      already hold lines from an earlier build: count them **before** launching
-      the upgraded app, and compare after.
+      failure. Compared against the count recorded in step 2, before the
+      installer ran. "No new line" only means something if the upgraded app
+      actually launched in between, so PASS also requires the new
+      `[migration]` line from the check above as proof of that launch.
 
 ```powershell
-$log = "$env:APPDATA\TaxOne Desktop\debug.log"
-$before = @(Select-String -Path $log -Pattern '[autostart]' -SimpleMatch -ErrorAction SilentlyContinue).Count
-# launch the upgraded app, then:
-$lines = @(Select-String -Path $log -Pattern '[autostart]' -SimpleMatch -ErrorAction SilentlyContinue)
-if ($lines.Count -eq $before) { 'PASS' } else { 'FAIL'; $lines | Select-Object -Skip $before | ForEach-Object { $_.Line } }
+$bf = "$env:TEMP\quework-upgrade-log-baseline.json"
+if (-not (Test-Path -LiteralPath $bf)) { 'FAIL: no baseline file. Run the step 2 block before the installer.' }
+else {
+    $base   = Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json
+    $log    = "$env:APPDATA\TaxOne Desktop\debug.log"
+    $lines  = @(if (Test-Path -LiteralPath $log) { Select-String -LiteralPath $log -Pattern '[autostart]' -SimpleMatch })
+    $launch = @(if (Test-Path -LiteralPath $log) { Select-String -LiteralPath $log -Pattern '[migration] Re-pointed persisted host' -SimpleMatch }).Count - $base.migration
+    if ($launch -lt 1)                     { 'FAIL: no new [migration] line, so there is no evidence the upgraded app launched; an empty result proves nothing' }
+    elseif ($lines.Count -eq $base.autostart) { 'PASS' }
+    else { 'FAIL'; $lines | Select-Object -Skip $base.autostart | ForEach-Object { $_.Line } }
+}
 ```
-
-      No new lines: PASS. Any new line: FAIL. Report it verbatim.
 
 - [ ] **Disabled stays disabled.** In Task Manager → Startup apps, disable the
       app's entry (value name `com.taxone.desktop`; it may be listed as
@@ -291,6 +366,7 @@ if ($lines.Count -eq $before) { 'PASS' } else { 'FAIL'; $lines | Select-Object -
 
 ## 4. If it fails
 
-Restore `%APPDATA%\TaxOne Desktop` from the step-0 backup before re-running —
-the migration guards are one-shot and a half-migrated store is not a valid
-fixture.
+Run step 0 again before re-running, then step 2's baseline block again. The
+migration guards are one-shot, a half-migrated store is not a valid fixture,
+and the restore deletes the `debug.log` that the step 3 log checks count
+against.
