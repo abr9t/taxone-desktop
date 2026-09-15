@@ -45,13 +45,21 @@ nothing. Restore from the backup if that happens.
 
 ```
 type "%APPDATA%\TaxOne Desktop\taxone-settings.json"
-reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v com.taxone.desktop
 reg query "HKCU\Software\Classes\taxone-desktop\shell\open\command" /ve
 dir "%LOCALAPPDATA%\Programs\TaxOne Desktop"
 ```
 
 Expected: `serverUrl` is `https://taxone.cpa`; the Run entry and the protocol
 command both point at `...\TaxOne Desktop\TaxOne Desktop.exe`.
+
+Record the Run value too. Step 3 checks it against this:
+
+```powershell
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" | Select-Object com.taxone.desktop
+```
+
+If it is blank, autostart is off on this install, and after the upgrade it
+must still be absent.
 
 5. Record the queue counts. **Write these two numbers down** — step 3
    compares against them. Do not create a pending file to test with: the
@@ -139,35 +147,46 @@ and not a finding.
 
 - [ ] `reg query "HKCU\Software\Classes\taxone-desktop\shell\open\command" /ve`
       → `...\Quework Desktop\Quework Desktop.exe" "%1"`.
-- [ ] `reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v com.taxone.desktop`
-      → `...\Quework Desktop\Quework Desktop.exe`.
-
-      This one is the fragile check. The value name stays `com.taxone.desktop`
-      (it is the AppUserModelId, unchanged); only the path moves. It is repaired
-      by `reconcileAutoLaunch()` **on launch**, so run the app once before
-      checking. If the path is still `TaxOne Desktop`, the `launchItems` lookup
-      did not find the entry — report it rather than editing the registry.
-
-- [ ] `debug.log` contains **at most one** `[autostart] Re-registered` line
-      after launching the app twice.
+- [ ] **The Run value points at an exe that exists.** Launch the upgraded app
+      once, then:
 
 ```powershell
-Select-String -Path "$env:APPDATA\TaxOne Desktop\debug.log" -Pattern "autostart"
+$run = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").'com.taxone.desktop'
+"value: $run"
+if (-not $run) { 'FAIL: the value is gone' }
+elseif (Test-Path -LiteralPath $run.Trim('"') -PathType Leaf) { 'PASS' }
+else { 'FAIL: no exe at that path' }
 ```
 
-      One line on the first launch after the upgrade is correct. A second line
-      on the second launch means the path comparison never matches and the
-      registry is being rewritten on every start. The likeliest cause is
-      quoting: the Run value is stored as `"C:\...\app.exe"`, and if the
-      quotes come back as part of `entry.path` they will never equal
-      `process.execPath`. Report it — do not paper over it by stripping quotes
-      in `samePath()`, because that would also hide a genuine mismatch.
+      **PASS:** the value exists and `Test-Path` finds the exe it names.
+      **FAIL:** the value disappeared, or it names a path with no exe behind it.
+      Exception: if the step 1.4 baseline had no value, autostart was off, and
+      the value must still be absent. "The value is gone" is then a pass.
+      `.Trim('"')` only removes surrounding quotes, in case a later build
+      quotes the value; today it is written unquoted.
 
-- [ ] *Optional, if you want to exercise the Task Manager path:* before
-      upgrading, disable the `com.taxone.desktop` entry under Task Manager →
-      Startup apps. After the upgrade it must still be listed as **Disabled**,
-      with the path updated. Re-registering an entry without carrying its
-      enabled state through silently turns autostart back on.
+- [ ] `debug.log` gains **no** `[autostart]` line from this build. A successful
+      re-registration is not logged, so any new `[autostart]` line is a
+      failure. `debug.log` is append-only and survives upgrades, so it may
+      already hold lines from an earlier build: count them **before** launching
+      the upgraded app, and compare after.
+
+```powershell
+$log = "$env:APPDATA\TaxOne Desktop\debug.log"
+$before = @(Select-String -Path $log -Pattern '[autostart]' -SimpleMatch -ErrorAction SilentlyContinue).Count
+# launch the upgraded app, then:
+$lines = @(Select-String -Path $log -Pattern '[autostart]' -SimpleMatch -ErrorAction SilentlyContinue)
+if ($lines.Count -eq $before) { 'PASS' } else { 'FAIL'; $lines | Select-Object -Skip $before | ForEach-Object { $_.Line } }
+```
+
+      No new lines: PASS. Any new line: FAIL. Report it verbatim.
+
+- [ ] **Disabled stays disabled.** In Task Manager → Startup apps, disable the
+      app's entry (value name `com.taxone.desktop`; it may be listed as
+      Quework Desktop). Relaunch the app, then confirm the entry is still
+      **Disabled**. The app re-registers the entry on every launch; one that
+      does not carry the enabled state through turns autostart back on.
+      Re-enable it afterwards if you want autostart back.
 
 ### Function
 

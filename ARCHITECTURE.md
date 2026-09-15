@@ -65,7 +65,7 @@ Node.js built-in `crypto.randomUUID()` for IDs (no `uuid` package — ESM incomp
 - **Renderer processes are display-only** — communicate via IPC only
 - **`nodeIntegration: false`, `contextIsolation: true`** — separate preloads per window type
 - **App user model ID** — `com.taxone.desktop` (`app.setAppUserModelId`)
-- **First-launch auto-start** — on first run, `app.setLoginItemSettings({ openAtLogin: true, path: process.execPath })` and `hasLaunched` flag set in `appStore`. On every packaged launch, `reconcileAutoLaunch()` (`src/auto-launch.js`) repoints the Run-key entry if its recorded path has drifted — see [Autostart reconciliation](#autostart-reconciliation)
+- **First-launch auto-start** — on first run, `app.setLoginItemSettings({ openAtLogin: true, path: process.execPath })` and `hasLaunched` flag set in `appStore`. On every packaged launch, `reconcileAutoLaunch()` (`src/auto-launch.js`) re-registers the existing Run-key entry against the running executable, unconditionally — see [Autostart reconciliation](#autostart-reconciliation)
 - **App opens File Upload window on start** — `showMigrationTool()` called after successful auth verification
 - **Tray close notification** — first time the File Upload window is closed, a notification says the app is still running in the tray (`hasClosedUploadWindow` flag)
 
@@ -442,20 +442,38 @@ Two things resolve against it:
 
 ### Autostart reconciliation
 
-`src/auto-launch.js`. `productName` drives the executable name and the install
-directory, so the rebrand moves the exe from
+`src/auto-launch.js`. `productName` drives the executable name, so the rebrand
+renames the exe. On a machine upgraded from v1.1.5 it goes from
 `%LOCALAPPDATA%\Programs\TaxOne Desktop\TaxOne Desktop.exe` to
-`...\Quework Desktop\Quework Desktop.exe`. The Run-key entry recording that
-absolute path does not move with it, and because the app only enables autostart
-once (behind `hasLaunched`) it never re-registers. The entry survives the upgrade
-pointing at an executable the installer removed, and the app silently stops
-starting at login.
+`%LOCALAPPDATA%\Programs\TaxOne Desktop\Quework Desktop.exe`: same directory, new
+file name, and the old exe is removed (see [Build & Distribution](#build--distribution)).
+The Run-key entry records the absolute exe path and does not follow the rename.
+The app enables autostart only once, behind `hasLaunched`, so without
+reconciliation the entry would keep naming `TaxOne Desktop.exe` and the app
+would silently stop starting at login.
 
-`reconcileAutoLaunch()` runs on every packaged launch and rewrites the path when
-it has drifted — but only when an entry already exists, since someone who turned
-autostart off in Settings has none and resurrecting it would be worse than a
-stale path. It carries `entry.enabled` through, so an entry disabled in Task
-Manager stays disabled: `setLoginItemSettings` defaults `enabled` to `true`.
+`reconcileAutoLaunch()` runs on every packaged launch and, when an entry exists,
+re-registers it **unconditionally** with `path: process.execPath`. It does not
+try to detect a stale path, because it cannot: the Run value is written
+unquoted, and Electron parses an unquoted value only up to the first space. For
+this app `launchItems[].path` comes back as `...\Programs\TaxOne`, which never
+equals the real executable path. An earlier version compared the two, and a live
+upgrade test showed it re-registering on every launch anyway. Rewriting an
+identical value is harmless.
+
+What it will not do, none of which depends on reading the path back:
+
+- **Create an entry.** Turning autostart off in Settings removes the value, and
+  a launch must not resurrect it.
+- **Re-enable one.** It passes `entry.enabled` through, so an entry disabled in
+  Task Manager stays disabled; `setLoginItemSettings` defaults `enabled` to
+  `true`.
+- **Touch the registry from an unpackaged build.**
+
+It logs only on failure (`[autostart] Reconcile failed: ...`). There is no
+success line: whether anything changed cannot be determined from a truncated
+path, and a line on every launch reads like a finding. Quoting the Run value so
+the path can be read back is tracked in `BACKLOG.md`.
 
 ### Debug log location
 
@@ -604,7 +622,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 - Desktop + Start Menu shortcuts, custom installer icon
 - `appId: com.taxone.desktop` — unchanged by the rebrand; see [The AppUserModelId](#the-appusermodelid)
 - `artifactName: TaxOne-Desktop-Setup.${ext}` — an identifier, coupled to `routes/web.php:540` in `abr9t/taxone`; see [The installer filename](#the-installer-filename)
-- `productName: Quework Desktop` — drives the executable name (`Quework Desktop.exe`) and the per-user install directory (`%LOCALAPPDATA%ProgramsQuework Desktop`), but **not** `userData`; see [The userData pin](#the-userdata-pin)
+- `productName: Quework Desktop` — drives the executable name (`Quework Desktop.exe`), but **not** `userData`; see [The userData pin](#the-userdata-pin). **The install directory is not renamed on upgrade.** Installing v1.2.0 over v1.1.5 reuses the existing directory: the exe lands at `%LOCALAPPDATA%\Programs\TaxOne Desktop\Quework Desktop.exe`, the old directory name is kept, and no `TaxOne Desktop.exe` remains in it (observed on a live upgrade). A fresh install is expected to use `%LOCALAPPDATA%\Programs\Quework Desktop` (electron-builder's default for `productName`; not verified). **The directory name is therefore not a reliable indicator of version** — check the exe name or its version resource instead.
 - Custom protocol `taxone-desktop://` registered in `electron-builder.yml` under `protocols`
 - Icon: `assets/icon.ico` (installer + NSIS), `assets/icon.png` (app window)
 - Files included: `src/**/*`, `assets/**/*`, `node_modules/**/*`, `package.json`
