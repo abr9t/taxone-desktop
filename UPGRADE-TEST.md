@@ -45,12 +45,43 @@ nothing. Restore from the backup if that happens.
 
 ```
 type "%APPDATA%\TaxOne Desktop\taxone-settings.json"
-reg query "HKCU\Software\Classes\taxone-desktop\shell\open\command" /ve
-dir "%LOCALAPPDATA%\Programs\TaxOne Desktop"
 ```
 
-Expected: `serverUrl` is `https://taxone.cpa`; the Run entry and the protocol
-command both point at `...\TaxOne Desktop\TaxOne Desktop.exe`.
+```powershell
+# Install directory, located from the uninstall key rather than assumed.
+$key = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\fb2f6324-7194-5753-aa0e-d1c9da0ecd6e' -ErrorAction SilentlyContinue
+if (-not $key) { 'STOP: uninstall key fb2f6324-... not found; v1.1.5 is not installed' }
+else {
+    "DisplayName: $($key.DisplayName)"
+    if ($key.UninstallString -match '^"?(.+?\.exe)"?') {
+        $dir = Split-Path $Matches[1] -Parent
+        "install dir: $dir"
+        Get-ChildItem -LiteralPath $dir -Filter *.exe | ForEach-Object { "  $($_.Name)" }
+    } else { "STOP: cannot parse UninstallString: $($key.UninstallString)" }
+}
+
+# Run entry and protocol command: each must name an existing TaxOne Desktop.exe.
+$check = {
+    param($label, $value)
+    if (-not $value) { "${label}: NOTE: no value"; return }
+    if ($value -notmatch '^"?(.+?\.exe)"?') { "${label}: FAIL: cannot parse: $value"; return }
+    $exe = $Matches[1]
+    $problems = @()
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { $problems += 'exe does not exist' }
+    if ((Split-Path $exe -Leaf) -ne 'TaxOne Desktop.exe')  { $problems += 'exe is not TaxOne Desktop.exe' }
+    if ($problems) { "${label}: FAIL: $($problems -join ', ') -> $exe" } else { "${label}: PASS -> $exe" }
+}
+& $check 'Run'      (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').'com.taxone.desktop'
+& $check 'protocol' (Get-ItemProperty 'HKCU:\Software\Classes\taxone-desktop\shell\open\command').'(default)'
+```
+
+Expected: `serverUrl` is `https://taxone.cpa`; `DisplayName` is
+`TaxOne Desktop 1.1.5`; the install directory is listed with the exes in it;
+and `Run` and `protocol` both PASS, naming an existing exe called
+`TaxOne Desktop.exe`. Which directory that is does not matter and is not
+checked: an installer reuses whatever directory it finds, so on a machine that
+has had any earlier install it may not be `...\Programs\TaxOne Desktop`. A `Run`
+NOTE means autostart is off; the next step covers that case.
 
 Record the Run value too. Step 3 checks it against this:
 
