@@ -70,19 +70,15 @@ function entry(overrides) {
 
 // ─── Everything else it must not do ───────────────────────────────
 {
+    // No staleness check: a path that already matches is rewritten too. The
+    // stored path cannot be read back reliably (see the truncation case below),
+    // so the write is unconditional and has to be idempotent.
     const app = makeApp({ launchItems: [entry({ path: NEW_EXE })] });
-    assert.strictEqual(run(app), 'up-to-date');
-    assert.strictEqual(app.writes.length, 0, 'a correct path is not rewritten');
-    console.log('  ok  an up-to-date entry is left alone');
-    passed++;
-}
-
-{
-    // Same path, different case and separators — Windows, so still a match.
-    const app = makeApp({ launchItems: [entry({ path: NEW_EXE.toUpperCase().replace(/\\/g, '/') })] });
-    assert.strictEqual(run(app), 'up-to-date');
-    assert.strictEqual(app.writes.length, 0, 'case and separators do not count as drift');
-    console.log('  ok  case and separator differences are not treated as drift');
+    assert.strictEqual(run(app), 're-registered');
+    assert.strictEqual(app.writes.length, 1, 'a matching path is still written');
+    assert.deepStrictEqual(app.writes[0], { openAtLogin: true, path: NEW_EXE, enabled: true },
+        'and written with exactly the same settings, so repeating it changes nothing');
+    console.log('  ok  an entry that already matches is rewritten identically');
     passed++;
 }
 

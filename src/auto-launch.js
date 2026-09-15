@@ -1,4 +1,3 @@
-const path = require('path');
 const { debugLog } = require('./debug-log');
 
 // The registry value name Electron writes the autostart entry under. It is
@@ -6,22 +5,33 @@ const { debugLog } = require('./debug-log');
 // not change it, which is the only reason the entry below is findable at all.
 const AUTO_LAUNCH_ENTRY_NAME = 'com.taxone.desktop';
 
-function samePath(a, b) {
-    return path.normalize(a).toLowerCase() === path.normalize(b).toLowerCase();
-}
-
-// productName drives the executable name and the install directory, so the
-// rebrand moves the exe — but the Run-key entry recording its absolute path
-// does not move with it. The entry survives the upgrade pointing at an
-// executable the installer has just removed, and the app silently stops
-// starting at login.
+// productName drives the executable name, so the rebrand moves the exe — but
+// the Run-key entry recording its absolute path does not move with it. The
+// entry survives the upgrade pointing at an executable that no longer exists,
+// and the app silently stops starting at login.
 //
-// Re-assert it whenever the recorded path has drifted. Only when an entry
-// already exists: someone who turned autostart off in Settings has none, and
-// resurrecting it would be worse than a stale path.
+// So when an entry exists, re-assert it with the running executable on every
+// packaged launch. Unconditionally: whether the stored path is stale cannot be
+// read back. The Run value is written unquoted, and Electron parses an
+// unquoted value up to the first space — for this app, launchItems[].path
+// comes back as "...\Programs\TaxOne", which never equals process.execPath.
+// A staleness check built on it re-registered on every launch anyway, while
+// claiming to detect drift. Rewriting an identical value is harmless.
+//
+// For the same reason there is no success log: "did anything change?" is not
+// answerable, and a line on every launch is noise that looks like a finding.
+// Failures are still logged.
+//
+// The rules that do not depend on reading the path back:
+// - Never create an entry. Turning autostart off in Settings removes the
+//   value, and a rename must not resurrect it.
+// - Never re-enable one. enabled carries the startup-approved state that
+//   Task Manager and Windows Settings toggle without removing the value, and
+//   setLoginItemSettings defaults it to true.
+// - Never touch the registry from an unpackaged build.
 //
 // @param deps - injected by tests; defaults come from the Electron runtime.
-// @returns {string} what it did, for tests and for the log
+// @returns {string} what it did, for tests
 function reconcileAutoLaunch(deps = {}) {
     const app = deps.app || require('electron').app;
     const execPath = deps.execPath || process.execPath;
@@ -34,20 +44,11 @@ function reconcileAutoLaunch(deps = {}) {
         const entry = (settings.launchItems || []).find(item => item.name === AUTO_LAUNCH_ENTRY_NAME);
         if (!entry) return 'no-entry';
 
-        if (samePath(entry.path, execPath)) return 'up-to-date';
-
-        // enabled carries the startup-approved state: Task Manager and
-        // Windows Settings can disable an entry without removing it, and
-        // setLoginItemSettings defaults enabled to true. Writing the new path
-        // without it would re-enable autostart for someone who turned it off
-        // there — a rename must not overrule that.
         app.setLoginItemSettings({
             openAtLogin: true,
             path: execPath,
             enabled: entry.enabled,
         });
-        log(`[autostart] Re-registered: ${entry.path} -> ${execPath}`
-            + ` (enabled: ${entry.enabled})`);
         return 're-registered';
     } catch (err) {
         log(`[autostart] Reconcile failed: ${err.message}`);
