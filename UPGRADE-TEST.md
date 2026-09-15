@@ -133,20 +133,69 @@ and not a finding.
 
 ### Upgraded in place, not alongside
 
-- [ ] **Apps & Features** lists exactly one entry: `Quework Desktop 1.2.0`.
-      No `TaxOne Desktop 1.1.5` beside it.
-      (Both installers derive the same uninstall key
-      `fb2f6324-7194-5753-aa0e-d1c9da0ecd6e` from the unchanged
-      `appId: com.taxone.desktop` — verified, but confirm it really happened.)
-- [ ] `%LOCALAPPDATA%\Programs\TaxOne Desktop` is **gone**, and
-      `%LOCALAPPDATA%\Programs\Quework Desktop\Quework Desktop.exe` exists.
+- [ ] **One uninstall entry, same key, no old exe.** Do **not** judge this by
+      the install directory's name: an upgrade reuses the existing directory,
+      so over v1.1.5 it is still called `TaxOne Desktop`, and its name proves
+      nothing either way. Check these three instead:
+
+```powershell
+$un  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+$key = Get-ItemProperty "$un\fb2f6324-7194-5753-aa0e-d1c9da0ecd6e" -ErrorAction SilentlyContinue
+
+# 1. The uninstall key is unchanged.
+if ($key) { "1 PASS: key present, DisplayName = $($key.DisplayName)" } else { '1 FAIL: key fb2f6324-... is missing' }
+
+# 2. Exactly one *Desktop* entry, and it is Quework Desktop 1.2.0.
+$m = @(Get-ChildItem $un | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like '*Desktop*' })
+$m | ForEach-Object { "   $($_.PSChildName)  $($_.DisplayName)" }
+if ($m.Count -eq 1 -and $m[0].DisplayName -eq 'Quework Desktop 1.2.0') { '2 PASS' } else { "2 FAIL: $($m.Count) match(es), listed above" }
+
+# 3. No TaxOne Desktop.exe in the install directory, located from the
+#    uninstall key rather than assumed.
+if ($key.UninstallString -match '^"?(.+?\.exe)"?') {
+    $dir = Split-Path $Matches[1] -Parent
+    "   install dir: $dir"
+    if (Test-Path -LiteralPath (Join-Path $dir 'TaxOne Desktop.exe')) { '3 FAIL: TaxOne Desktop.exe is still there' } else { '3 PASS' }
+} else { "3 FAIL: cannot parse UninstallString: $($key.UninstallString)" }
+```
+
+      All three must PASS. For check 2, read the listed matches before calling
+      it a failure: `*Desktop*` also matches unrelated apps such as GitHub
+      Desktop. The failure that matters is any `TaxOne` or `Quework` entry
+      other than the `fb2f6324-...` key.
+
+      (Both installers derive `fb2f6324-7194-5753-aa0e-d1c9da0ecd6e` as a
+      UUIDv5 of the unchanged `appId: com.taxone.desktop`. That is why the
+      upgrade lands in place.)
 - [ ] Desktop and Start Menu each have exactly one shortcut, `Quework Desktop`,
       and it launches. No orphaned `TaxOne Desktop` shortcut.
 
 ### Registry follows the renamed executable
 
-- [ ] `reg query "HKCU\Software\Classes\taxone-desktop\shell\open\command" /ve`
-      → `...\Quework Desktop\Quework Desktop.exe" "%1"`.
+- [ ] **The protocol command names the same exe as the Run value.** The
+      expected path is not written down here on purpose: it is whatever
+      directory the install actually uses. Launch the upgraded app once, then:
+
+```powershell
+$cmd = (Get-ItemProperty 'HKCU:\Software\Classes\taxone-desktop\shell\open\command').'(default)'
+$run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').'com.taxone.desktop'
+"command: $cmd"
+"run:     $run"
+if ($cmd -notmatch '^"?(.+?\.exe)"?') { 'FAIL: cannot parse the command' } else {
+    $exe = $Matches[1]
+    $ok  = $true
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf))      { 'FAIL: the command exe does not exist'; $ok = $false }
+    if ((Split-Path $exe -Leaf) -ne 'Quework Desktop.exe')      { 'FAIL: the command exe is not Quework Desktop.exe'; $ok = $false }
+    if (-not $run)                                              { 'NOTE: no Run value (autostart off), so there is nothing to compare against' }
+    elseif ($exe -ne $run.Trim('"'))                            { 'FAIL: the command exe differs from the Run value'; $ok = $false }
+    if ($ok) { 'PASS' }
+}
+```
+
+      **PASS:** the command's exe exists, is named `Quework Desktop.exe`, and
+      is the same path as the Run value. Quotes are stripped from both before
+      comparing. If autostart is off there is no Run value; the first two
+      conditions must still hold.
 - [ ] **The Run value points at an exe that exists.** Launch the upgraded app
       once, then:
 
