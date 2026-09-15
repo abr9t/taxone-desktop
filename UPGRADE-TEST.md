@@ -87,10 +87,10 @@ Get-FileHash "<path above>" -Algorithm SHA256
 
 | | |
 |---|---|
-| SHA256 | `6656CC520145A2C4A85AA02EA3DFBDA570046CE43EF0895DB563D732153904EC` |
-| Size | 84,637,546 bytes |
+| SHA256 | `7452DEF7EBBDEC808D1F3EFA6C5B60A18C53C2A2C48AF6690FE2E02F019A45B9` |
+| Size | 84,637,702 bytes |
 | Version resource | Quework Desktop 1.2.0, Quework LLC |
-| Built from | `c419ac4` — the last commit that changes anything the installer packs |
+| Built from | `5176536`. The last commit that changes anything the installer packs is `f29d890` |
 
 Unsigned, so SmartScreen will warn on launch. That is unchanged from v1.1.5
 and not a finding.
