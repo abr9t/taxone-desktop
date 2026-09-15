@@ -68,6 +68,31 @@ function entry(overrides) {
     passed++;
 }
 
+// ─── The unquoted Run value, as seen on a live upgrade ────────────
+{
+    // The Run value is written unquoted, so Electron reads it back only up to
+    // the first space. This is the exact path launchItems returned on the
+    // machine where the bug was confirmed. Launch twice, as that test did.
+    const TRUNCATED = 'C:\\Users\\aburszczyk\\AppData\\Local\\Programs\\TaxOne';
+    const app = makeApp({ launchItems: [entry({ path: TRUNCATED, enabled: false })] });
+
+    const logs = [];
+    for (let launch = 0; launch < 2; launch++) {
+        assert.strictEqual(run(app), 're-registered', `launch ${launch + 1}: re-registers`);
+        logs.push(...app.logs);
+    }
+
+    for (const write of app.writes) {
+        assert.strictEqual(write.path, NEW_EXE, 'written with process.execPath, not the truncated path');
+        assert.strictEqual(write.enabled, false, 'a disabled entry stays disabled');
+        assert.strictEqual(write.openAtLogin, true);
+    }
+    assert.strictEqual(logs.length, 0,
+        'no log line on either launch — a per-launch "Re-registered" line is the bug');
+    console.log('  ok  a truncated unquoted path re-registers, stays disabled, and logs nothing');
+    passed++;
+}
+
 // ─── Everything else it must not do ───────────────────────────────
 {
     // No staleness check: a path that already matches is rewritten too. The
