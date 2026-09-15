@@ -265,8 +265,10 @@
                 showError('Enter your Quework URL first.');
                 return;
             }
-            const url = serverUrl.replace(/\/+$/, '') + '/desktop/authorize';
-            window.taxone.openExternal(url);
+            const result = await window.taxone.openBrowserSignIn(serverUrl);
+            if (!result.success) {
+                showError(result.error);
+            }
         }
 
         async function connectWithToken() {
