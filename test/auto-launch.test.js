@@ -71,19 +71,30 @@ function entry(overrides) {
 // ─── The unquoted Run value, as seen on a live upgrade ────────────
 {
     // The Run value is written unquoted, so Electron reads it back only up to
-    // the first space. This is the exact path launchItems returned on the
-    // machine where the bug was confirmed. Launch twice, as that test did.
+    // the first space. Both paths below are the exact ones from the machine
+    // where the bug was confirmed: TRUNCATED is what launchItems returned, and
+    // LIVE_EXE is the real process.execPath there. Note that TRUNCATED is a
+    // prefix of LIVE_EXE. That is deliberate, not incidental: a staleness
+    // check that treats "entry.path is a prefix of execPath" as up to date
+    // would skip the write on that machine, and this fixture has to reproduce
+    // that, or such a check passes here while autostart stays broken live.
+    // Launch twice, as that test did.
     const TRUNCATED = 'C:\\Users\\aburszczyk\\AppData\\Local\\Programs\\TaxOne';
+    const LIVE_EXE = 'C:\\Users\\aburszczyk\\AppData\\Local\\Programs\\TaxOne Desktop\\Quework Desktop.exe';
+    assert.ok(LIVE_EXE.startsWith(TRUNCATED), 'fixture invariant: the truncated path is a prefix of the live exe');
+
     const app = makeApp({ launchItems: [entry({ path: TRUNCATED, enabled: false })] });
 
     const logs = [];
     for (let launch = 0; launch < 2; launch++) {
-        assert.strictEqual(run(app), 're-registered', `launch ${launch + 1}: re-registers`);
+        assert.strictEqual(run(app, { execPath: LIVE_EXE }), 're-registered', `launch ${launch + 1}: re-registers`);
         logs.push(...app.logs);
     }
 
+    // Without this the loop below is vacuous: zero writes would pass it.
+    assert.strictEqual(app.writes.length, 2, 'one write per launch');
     for (const write of app.writes) {
-        assert.strictEqual(write.path, NEW_EXE, 'written with process.execPath, not the truncated path');
+        assert.strictEqual(write.path, LIVE_EXE, 'written with process.execPath, not the truncated path');
         assert.strictEqual(write.enabled, false, 'a disabled entry stays disabled');
         assert.strictEqual(write.openAtLogin, true);
     }
@@ -96,7 +107,7 @@ function entry(overrides) {
 // ─── Everything else it must not do ───────────────────────────────
 {
     // No staleness check: a path that already matches is rewritten too. The
-    // stored path cannot be read back reliably (see the truncation case below),
+    // stored path cannot be read back reliably (see the truncation case above),
     // so the write is unconditional and has to be idempotent.
     const app = makeApp({ launchItems: [entry({ path: NEW_EXE })] });
     assert.strictEqual(run(app), 're-registered');
