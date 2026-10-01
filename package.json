@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node test/run-all.js",
     "start": "electron .",
-    "dev": "cross-env NODE_ENV=development electron .",
+    "dev": "node scripts/dev.js",
     "build": "electron-builder --win",
     "build:dir": "electron-builder --win --dir",
     "build:win": "electron-builder --win"
