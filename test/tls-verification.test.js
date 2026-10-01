@@ -83,7 +83,7 @@ async function main() {
     assert.strictEqual(good.counts.connections, 0);
     ok('packaged: createApiClient refuses a dev host and never connects');
 
-    assert.strictEqual(await uploader.verifyTokenWith(good.origin, 'tok'), false);
+    assert.deepStrictEqual(await uploader.verifyTokenWith(good.origin, 'tok'), { ok: false, error: null });
     await tick();
     assert.strictEqual(good.counts.connections, 0, 'verifyTokenWith must build its client through the factory');
     ok('packaged: verifyTokenWith goes through the factory and never connects');
@@ -135,6 +135,53 @@ async function main() {
         const r = await runChild('factory', `${wrong.origin}/ping`, { NODE_EXTRA_CA_CERTS: TEST_CA });
         assert.deepStrictEqual(r, { ok: false, code: 'ERR_TLS_CERT_ALTNAME_INVALID' });
         ok('with the extra CA, a certificate for another hostname is still rejected (hostname check stays on)');
+    }
+
+    // ─── A certificate failure is named, not reported as a bad token ─
+
+    stubs.electron.app.isPackaged = false;
+    const host = new URL(good.origin).host;
+
+    {
+        const err = await uploader.createApiClient(good.origin, 'tok').get('/api/desktop/clients')
+            .then(() => null, e => e);
+        assert.ok(err && UNTRUSTED.includes(err.code), 'err.code is preserved for code that branches on it');
+        assert.ok(err.message.includes('could not verify the security certificate'), err.message);
+        assert.ok(err.message.includes(host), 'the message names the host');
+        assert.ok(err.message.includes(err.code), 'the message carries the code for support');
+        assert.ok(stubs.logs.some(l => l.includes(`[tls] Certificate verification failed for ${host}`)), 'and it is logged');
+        ok('a certificate failure says "could not verify the security certificate", with host and code');
+
+        const { MigrationQueue } = require('../src/migration');
+        assert.strictEqual(MigrationQueue.prototype._isRetryableError.call({}, err), false);
+        ok('the upload queue does not retry it (the message avoids the retry keywords)');
+    }
+
+    {
+        const verdict = await uploader.verifyTokenWith(good.origin, 'tok');
+        assert.strictEqual(verdict.ok, false);
+        assert.ok(verdict.error && verdict.error.includes('security certificate'), JSON.stringify(verdict));
+        ok('sign-in: verifyTokenWith returns the certificate message instead of plain false');
+    }
+
+    {
+        stubs.store.set('serverUrl', good.origin);
+        stubs.store.set('_token', 'tok');
+        assert.strictEqual(await uploader.verifyToken(), 'tls_error');
+        ok('startup: verifyToken reports tls_error, not network_error');
+    }
+
+    {
+        // Not every failure is a certificate: a refused connection keeps
+        // Node's message and still reads as a plain sign-in failure.
+        const probe = await startServer('localhost');
+        const closed = probe.origin;
+        await new Promise(r => probe.server.close(r));
+        const err = await uploader.createApiClient(closed, 'tok').get('/x').then(() => null, e => e);
+        assert.strictEqual(err.code, 'ECONNREFUSED');
+        assert.ok(!err.message.includes('security certificate'), err.message);
+        assert.deepStrictEqual(await uploader.verifyTokenWith(closed, 'tok'), { ok: false, error: null });
+        ok('a refused connection is left alone (only certificate codes are renamed)');
     }
 
     good.server.close();

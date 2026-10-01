@@ -251,6 +251,17 @@ app.whenReady().then(async () => {
             startWatching();
             initMigrationQueue();
             showMigrationTool();
+
+            // The token may be fine, so this is not a reason to sign out —
+            // but nothing will upload, and the user should hear why now
+            // rather than from a column of failed files.
+            if (result === 'tls_error') {
+                updateTrayMenu('error');
+                new Notification({
+                    title: 'Quework Desktop',
+                    body: uploader.describeCertificateError(new URL(serverUrl).host),
+                }).show();
+            }
         }
     }
 });
@@ -555,9 +566,9 @@ ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
         }
         const canonicalUrl = check.url;
 
-        const isValid = await uploader.verifyTokenWith(canonicalUrl, token);
-        if (!isValid) {
-            return { success: false, error: 'Invalid token. Check your token and server URL.' };
+        const verdict = await uploader.verifyTokenWith(canonicalUrl, token);
+        if (!verdict.ok) {
+            return { success: false, error: verdict.error || 'Invalid token. Check your token and server URL.' };
         }
         await auth.saveToken(token);
         auth.saveServerUrl(canonicalUrl);

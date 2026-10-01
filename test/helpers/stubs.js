@@ -61,7 +61,8 @@ function installStubs({ isPackaged = true, keytar = false, axios = null } = {}) 
 function recordingAxios() {
     const calls = [];
     const instance = (cfg) => ({
-        get: async (url) => { calls.push({ method: 'get', baseURL: cfg.baseURL, url }); return { status: 200, data: {} }; },
+        interceptors: { response: { use: () => {} } },
+        get:async (url) => { calls.push({ method: 'get', baseURL: cfg.baseURL, url }); return { status: 200, data: {} }; },
         post: async (url) => { calls.push({ method: 'post', baseURL: cfg.baseURL, url }); return { status: 200, data: {} }; },
     });
     return {

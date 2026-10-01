@@ -23,6 +23,37 @@ const { debugLog } = require('./debug-log');
 // keepAlive matches the Node 20 global agent this replaces.
 const httpsAgent = new https.Agent({ keepAlive: true, rejectUnauthorized: true });
 
+// Node's codes for a server certificate it would not accept. On a network that
+// re-signs TLS (corporate inspection, some firewalls and antivirus) every
+// request fails with one of these, because Node does not read the Windows
+// store the inspecting CA was pushed to. Without a name for it, that reads as
+// "Invalid token" at sign-in and as a raw OpenSSL string in the upload queue.
+const CERTIFICATE_ERROR_CODES = new Set([
+    'UNABLE_TO_GET_ISSUER_CERT',
+    'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    'SELF_SIGNED_CERT_IN_CHAIN',
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'CERT_UNTRUSTED',
+    'CERT_HAS_EXPIRED',
+    'CERT_NOT_YET_VALID',
+    'CERT_REVOKED',
+    'CERT_SIGNATURE_FAILURE',
+    'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+
+function isCertificateError(err) {
+    return !!err && CERTIFICATE_ERROR_CODES.has(err.code);
+}
+
+// Kept clear of the words MigrationQueue._isRetryableError() looks for
+// ("SSL", "timeout"): retrying cannot fix a certificate.
+function describeCertificateError(host, code) {
+    return `Quework Desktop could not verify the security certificate of ${host}`
+        + `${code ? ` (${code})` : ''}, so nothing was sent. If your office network inspects `
+        + `encrypted traffic, ask your IT team to exempt ${host}.`;
+}
+
 class HostRejectedError extends Error {
     constructor(message) {
         super(message);
@@ -39,7 +70,7 @@ function createApiClient(serverUrl, token, { timeout = 300000 } = {}) {
     const check = auth.validateServerUrl(serverUrl);
     if (!check.ok) throw new HostRejectedError(check.error);
 
-    return axios.create({
+    const client = axios.create({
         baseURL: check.url,
         timeout,
         httpsAgent,
@@ -48,6 +79,20 @@ function createApiClient(serverUrl, token, { timeout = 300000 } = {}) {
             Accept: 'application/json',
         },
     });
+
+    // Every caller shows err.message somewhere — the sign-in window, the
+    // confirm window, a queue row — so name the problem here, once. err.code
+    // is left alone for code that branches on it.
+    const host = new URL(check.url).host;
+    client.interceptors.response.use(undefined, (err) => {
+        if (isCertificateError(err)) {
+            debugLog(`[tls] Certificate verification failed for ${host}: ${err.code}`);
+            err.message = describeCertificateError(host, err.code);
+        }
+        return Promise.reject(err);
+    });
+
+    return client;
 }
 
 let apiClient = null;
@@ -86,6 +131,9 @@ async function verifyToken() {
             return 'host_rejected';
         }
         if (err.code === 'E_NOT_AUTHENTICATED') return 'auth_error';
+        // Not a bad token and not "offline": the token may be fine, but no
+        // request will get through until the certificate problem is fixed.
+        if (isCertificateError(err)) return 'tls_error';
         const status = err.response?.status;
         console.error('[verifyToken] failed:', status || err.code || err.message);
         // 401/403 = token is invalid → must re-login
@@ -95,13 +143,17 @@ async function verifyToken() {
     }
 }
 
+/**
+ * @returns {Promise<{ok: boolean, error: string|null}>} error is set only
+ *          when there is something more specific to say than "invalid token".
+ */
 async function verifyTokenWith(serverUrl, token) {
     try {
         const client = createApiClient(serverUrl, token, { timeout: 10000 });
         const res = await client.get('/api/desktop/clients', { params: { search: '', limit: 1 } });
-        return res.status === 200;
-    } catch {
-        return false;
+        return { ok: res.status === 200, error: null };
+    } catch (err) {
+        return { ok: false, error: isCertificateError(err) ? err.message : null };
     }
 }
 
@@ -153,6 +205,6 @@ async function uploadFile(filePath, clientId, folderPath, filename) {
 }
 
 module.exports = {
-    createApiClient, HostRejectedError,
+    createApiClient, HostRejectedError, isCertificateError, describeCertificateError,
     configure, verifyToken, verifyTokenWith, searchClients, fetchFolders, uploadFile,
 };
