@@ -173,6 +173,36 @@ async function main() {
         }
         ok('a hung keychain delete: _token is already gone (deleted first)');
     }
+    {
+        // Negative: a clearToken whose keychain delete succeeds revokes
+        // nothing — no stored flag, and no in-memory one either (a token
+        // that later reaches the keychain is read normally).
+        reset({ keychainToken: 'kc', storeToken: 'st' });
+        await auth.clearToken();
+        assert.strictEqual(stubs.keychain.has(KEY), false, 'precondition: the keychain delete succeeded');
+        assert.strictEqual(stubs.store.has('_keychainTokenRevoked'), false, 'flag absent after a normal clearToken');
+        stubs.keychain.set(KEY, 'next');
+        assert.strictEqual(await auth.getToken(), 'next', 'the keychain is still read after a normal clearToken');
+        ok('a normal clearToken: no revocation flag, stored or in memory');
+    }
+    {
+        // Negative: a keychain read that fails is not a revocation. getToken
+        // falls back to _token this once and reads the keychain next time.
+        reset({ keychainToken: 'kc', storeToken: 'st' });
+        const keytar = require('keytar');
+        const origGet = keytar.getPassword;
+        keytar.getPassword = async () => { throw new Error('keychain busy'); };
+        let first;
+        try {
+            first = await auth.getToken();
+        } finally {
+            keytar.getPassword = origGet;
+        }
+        assert.strictEqual(first, 'st', 'a failed keychain read falls back to _token');
+        assert.strictEqual(stubs.store.has('_keychainTokenRevoked'), false, 'flag absent after keytar.getPassword fails');
+        assert.strictEqual(await auth.getToken(), 'kc', 'the keychain is read again once it answers');
+        ok('keytar.getPassword fails: falls back once, no revocation flag, stored or in memory');
+    }
 
     // ─── Accepted hosts ────────────────────────────────────────────
 
