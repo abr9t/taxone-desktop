@@ -38,6 +38,8 @@ const { debugLog } = require('./debug-log');
 const { reconcileAutoLaunch, AUTO_LAUNCH_ENTRY_NAME } = require('./auto-launch');
 const { retryFailedIfOnline } = require('./reconnect');
 const { resolveStartup } = require('./startup');
+const { createUpdateController } = require('./updater');
+const { isFirstLaunchOfVersion } = require('./update-policy');
 const Store = require('electron-store');
 const appStore = new Store();
 
@@ -58,6 +60,9 @@ let settingsWindow = null;
 let confirmWindow = null;
 let migrationWindow = null;
 let migrationQueue = null;
+let updates = null;            // the update controller; null when unpackaged or not started
+let trayStatus = 'disconnected';
+let directUploads = 0;         // confirm-window uploads in flight (upload:file)
 
 // Why the sign-in window was opened at startup, when there is something to
 // say — e.g. a stored host was rejected and cleared. Shown by login.html;
@@ -236,6 +241,12 @@ app.whenReady().then(async () => {
     // actually watches ~/TaxoneWatch.
     createTray();
 
+    // Before the host check, not after: resolveStartup() returns early to
+    // the sign-in window for a rejected host, and a signed-out install is
+    // exactly the one that may need an update (a widened allowlist, say).
+    // Updates go to GitHub, never to the stored host, and send no token.
+    startUpdates();
+
     // After the host migration, before anything authenticated: the stored
     // host is validated here, and a rejected one is cleared with the token
     // (see enforcePersistedServerUrl in auth.js). On 'login' nothing below
@@ -325,6 +336,7 @@ function createTray() {
 }
 
 function updateTrayMenu(status) {
+    trayStatus = status;
     const statusLabel = {
         disconnected: '⚪ Not connected',
         watching: '🟢 Watching for files',
@@ -356,6 +368,7 @@ function updateTrayMenu(status) {
         ...(queueCount > 0 ? [{ label: `📋 ${queueCount} file(s) pending`, enabled: false }] : []),
         { type: 'separator' },
         { label: 'Settings...', click: () => showSettings() },
+        ...updateMenuItems(),
         { type: 'separator' },
         ...(status === 'disconnected' ? [
             {
@@ -382,6 +395,107 @@ function updateTrayMenu(status) {
     ]);
 
     trayMenu = menu;
+}
+
+// ─── Updates ──────────────────────────────────────────────────────
+//
+// See src/updater.js and ARCHITECTURE.md, "Releases and auto-update".
+// Never throws: a failure here costs updates, not the tray or the queue.
+
+function startUpdates() {
+    try {
+        if (!gotLock) return;
+        if (!app.isPackaged) {
+            debugLog('[updater] Unpackaged build; automatic updates are off');
+            return;
+        }
+
+        const version = app.getVersion();
+        let lastLaunched;
+        try {
+            lastLaunched = appStore.get('lastLaunchedVersion');
+            appStore.set('lastLaunchedVersion', version);
+        } catch (err) {
+            // Unknown counts as a first launch: the quieter choice.
+            debugLog(`[updater] Could not read or record lastLaunchedVersion: ${err.message}`);
+        }
+
+        const { autoUpdater } = require('electron-updater');
+        updates = createUpdateController({
+            updater: autoUpdater,
+            getRestartState: () => ({
+                queue: migrationQueue,
+                unconfirmedFiles: pendingFiles.length,
+                directUploads,
+            }),
+            onChange: () => { if (tray) updateTrayMenu(trayStatus); },
+            notify: body => new Notification({ title: 'Quework Desktop', body }).show(),
+            // Looked up at call time, not captured, so tests can watch them.
+            timers: {
+                setTimeout: (fn, ms) => setTimeout(fn, ms),
+                setInterval: (fn, ms) => setInterval(fn, ms),
+            },
+        });
+        updates.start({ firstLaunchOfVersion: isFirstLaunchOfVersion(lastLaunched, version) });
+        debugLog(`[updater] Started for ${version}`);
+        if (tray) updateTrayMenu(trayStatus);
+    } catch (err) {
+        updates = null;
+        debugLog(`[updater] Not started: ${err.message}`);
+    }
+}
+
+function updateMenuItems() {
+    if (!updates) return [];
+    const ready = updates.downloadedVersion;
+    return [
+        ...(ready ? [{ label: `Restart to Update (${ready})`, click: () => restartToUpdate() }] : []),
+        {
+            label: updates.checking ? 'Checking for Updates...' : 'Check for Updates',
+            enabled: !updates.checking,
+            click: () => checkForUpdatesNow(),
+        },
+    ];
+}
+
+async function checkForUpdatesNow() {
+    try {
+        const outcome = await updates.check('manual');
+        if (outcome.skipped) return;
+        const offered = outcome.ok && outcome.result && outcome.result.isUpdateAvailable
+            ? outcome.result.updateInfo.version : null;
+        let body;
+        if (!outcome.ok) {
+            body = 'Could not check for updates. Details are in debug.log; the app will try again later.';
+        } else if (offered && offered === updates.downloadedVersion) {
+            body = `Quework Desktop ${offered} is ready. Choose "Restart to Update" in the tray menu, or quit to install it.`;
+        } else if (offered) {
+            body = `Downloading Quework Desktop ${offered} in the background.`;
+        } else {
+            body = `Quework Desktop ${app.getVersion()} is up to date.`;
+        }
+        new Notification({ title: 'Quework Desktop', body }).show();
+    } catch (err) {
+        debugLog(`[updater] Manual check failed: ${err.message}`);
+    }
+}
+
+function restartToUpdate() {
+    try {
+        const result = updates.restartToUpdate();
+        if (result.ok) return;
+        dialog.showMessageBox({
+            type: 'info',
+            buttons: ['OK'],
+            title: 'Update not installed yet',
+            message: 'Quework Desktop will not restart while files are uploading or waiting.',
+            detail: `Right now: ${result.reasons.join('; ')}.\n\n`
+                + 'The update stays ready. Choose Restart to Update again once these are done, '
+                + 'or it installs the next time you quit Quework Desktop.',
+        }).catch(err => debugLog(`[updater] Dialog failed: ${err.message}`));
+    } catch (err) {
+        debugLog(`[updater] Restart to update failed: ${err.message}`);
+    }
 }
 
 // ─── Windows ──────────────────────────────────────────────────────
@@ -692,6 +806,7 @@ ipcMain.handle('clients:folders', async (_, clientId, parentId) => {
 
 // Upload
 ipcMain.handle('upload:file', async (_, { filePath, clientId, folderPath, filename }) => {
+    directUploads++;
     try {
         updateTrayMenu('uploading');
         const result = await uploader.uploadFile(filePath, clientId, folderPath, filename);
@@ -710,6 +825,8 @@ ipcMain.handle('upload:file', async (_, { filePath, clientId, folderPath, filena
     } catch (err) {
         updateTrayMenu('watching');
         return { success: false, error: err.message };
+    } finally {
+        directUploads--;
     }
 });
 
