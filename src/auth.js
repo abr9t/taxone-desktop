@@ -1,6 +1,47 @@
+const path = require('path');
 const Store = require('electron-store');
+const { debugError } = require('./debug-log');
 
 const store = new Store({ name: 'taxone-settings' });
+
+// Tripwire for the userData pin in main.js. The Store above has already
+// resolved its directory: if the pin did not run first, it resolved to the
+// productName-derived folder, this install looks brand new, and there is
+// nothing for migrateLegacyHost() below to find. The symptom is
+// indistinguishable from a fresh install, so it has to announce itself.
+const EXPECTED_USER_DATA_DIR = 'TaxOne Desktop';
+
+// Only the lookup goes in the try — it legitimately fails when this module is
+// required outside Electron, as the unit tests do. The comparison stays
+// outside it: a bug in the check itself must not be swallowed by the same
+// catch that tolerates a missing runtime.
+let actualUserDataDir = null;
+let runningPackaged = true;
+try {
+    const { app } = require('electron');
+    actualUserDataDir = app.getPath('userData');
+    runningPackaged = app.isPackaged;
+} catch {
+    // Not running under Electron (unit tests) — nothing to check.
+}
+
+if (actualUserDataDir !== null && path.basename(actualUserDataDir) !== EXPECTED_USER_DATA_DIR) {
+    const message = `[auth] userData resolved to "${actualUserDataDir}" but must be pinned `
+        + `to "${EXPECTED_USER_DATA_DIR}" — every existing install's settings and upload `
+        + "queue live there. Check that main.js calls app.setPath('userData', ...) before "
+        + 'it requires this module.';
+
+    if (!runningPackaged) {
+        // Unpackaged: fail at the desk of whoever changed the require order,
+        // while it is still cheap.
+        throw new Error(message);
+    }
+    // Packaged: never throw — a user's app has to start. But debugError puts
+    // it in debug.log as well as on stderr, so a bypass that reaches a real
+    // install leaves a record instead of just an empty-looking config.
+    debugError(message);
+}
+
 const SERVICE_NAME = 'TaxOneDesktop';
 const ACCOUNT_NAME = 'api-token';
 
@@ -86,11 +127,117 @@ function migrateLegacyHost() {
     return migrated;
 }
 
-function saveServerUrl(url) {
-    if (url && !url.includes('localhost') && !url.includes('.test')) {
-        url = url.replace(/^http:\/\//, 'https://');
+// ─── Server URL validation ────────────────────────────────────────
+//
+// The single gate every serverUrl passes through before it is persisted.
+//
+// taxone-desktop:// is a protocol anyone can put behind a link, and the
+// stored host is where the app sends its bearer token on the next launch —
+// uploader.configure(serverUrl, token) runs unprompted from whenReady. So an
+// unvalidated taxone-desktop://connect?url=https://evil.example is a
+// one-click token exfiltration primitive, and the normalisation this
+// replaces (force https, strip trailing slashes) did nothing to stop it.
+//
+// Allowlist, not denylist: a Quework server is https on a single-label
+// subdomain of quework.app, full stop.
+const QUEWORK_APEX = 'quework.app';
+const HOSTNAME_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function devHostsAllowed() {
+    try {
+        return !require('electron').app.isPackaged;
+    } catch {
+        return false; // Fail closed if we cannot tell.
     }
-    store.set('serverUrl', url.replace(/\/+$/, ''));
 }
 
-module.exports = { getToken, saveToken, clearToken, getServerUrl, saveServerUrl, migrateLegacyHost };
+/**
+ * @param {string} input
+ * @param {{allowDevHosts?: boolean}} [opts]
+ * @returns {{ok: true, url: string} | {ok: false, error: string}}
+ *          On success, `url` is the canonical origin to store — callers must
+ *          use it rather than the string they passed in.
+ */
+function validateServerUrl(input, opts = {}) {
+    const allowDevHosts = opts.allowDevHosts !== undefined ? opts.allowDevHosts : devHostsAllowed();
+
+    if (typeof input !== 'string' || !input.trim()) {
+        return { ok: false, error: 'Enter your Quework URL.' };
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(input.trim());
+    } catch {
+        return { ok: false, error: `Not a valid URL: ${input.trim()}` };
+    }
+
+    // Credentials in the authority exist only to make a hostile host look
+    // like a trusted one: https://caputa.quework.app@evil.com is evil.com.
+    // new URL() resolves that correctly on its own, but reject it outright
+    // so nothing downstream reading the raw string can be fooled either.
+    if (parsed.username || parsed.password) {
+        return { ok: false, error: 'A Quework URL never contains a username or password.' };
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    const isDevHost = host === 'localhost' || host.endsWith('.test');
+
+    // The canonicalisation below rebuilds the URL from the hostname alone, so
+    // a port would be silently dropped — the allowlist would appear to accept
+    // something it never looked at, and https://caputa.quework.app:8443 would
+    // come back as the plain origin. Reject it instead, so the rule means
+    // exactly what it says. A dev server is the one place a port is load
+    // bearing, and it is preserved there.
+    if (parsed.port !== '' && !isDevHost) {
+        return { ok: false, error: `A Quework URL does not carry a port: ${parsed.host}` };
+    }
+
+    // Same rewrite as migrateLegacyHost(), for links and hand-typed URLs
+    // rather than persisted settings. The result is a fixed constant, so
+    // accepting either scheme here gives an attacker nothing.
+    if (LEGACY_HOSTS.includes(host)) {
+        return { ok: true, url: MIGRATED_HOST };
+    }
+
+    if (isDevHost) {
+        if (!allowDevHosts) {
+            return { ok: false, error: `Development servers are not allowed in a released build: ${host}` };
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return { ok: false, error: `Unsupported scheme: ${parsed.protocol}` };
+        }
+        return { ok: true, url: parsed.origin };
+    }
+
+    if (parsed.protocol !== 'https:') {
+        return { ok: false, error: 'A Quework URL must use https.' };
+    }
+
+    const labels = host.split('.');
+    if (labels.length !== 3
+        || `${labels[1]}.${labels[2]}` !== QUEWORK_APEX
+        || !HOSTNAME_LABEL.test(labels[0])) {
+        return { ok: false, error: `Not a Quework server: ${host}` };
+    }
+
+    return { ok: true, url: `https://${host}` };
+}
+
+/**
+ * Throws on an invalid URL. Callers that can put a message in front of the
+ * user should call validateServerUrl() first and report result.error.
+ * @returns {string} the canonical URL that was stored
+ */
+function saveServerUrl(url) {
+    const result = validateServerUrl(url);
+    if (!result.ok) throw new Error(result.error);
+    store.set('serverUrl', result.url);
+    return result.url;
+}
+
+module.exports = {
+    getToken, saveToken, clearToken,
+    getServerUrl, saveServerUrl, validateServerUrl,
+    migrateLegacyHost,
+};

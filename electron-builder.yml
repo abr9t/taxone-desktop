@@ -20,7 +20,12 @@ win:
   icon: assets/icon.ico
 
 nsis:
-  artifactName: "Quework-Desktop-Setup.${ext}"
+  # IDENTIFIER, not branding. The web app links straight at this exact
+  # filename — abr9t/taxone routes/web.php:540 points the download button at
+  # releases/latest/download/TaxOne-Desktop-Setup.exe — so renaming it 404s
+  # that button the moment a release is tagged. If it ever does change, both
+  # repos have to ship in the same release.
+  artifactName: "TaxOne-Desktop-Setup.${ext}"
   oneClick: false
   allowToChangeInstallationDirectory: false
   createDesktopShortcut: true

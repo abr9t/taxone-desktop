@@ -87,5 +87,23 @@ scenario('non-URL garbage is left untouched', {
     expectServerUrl: 'not a url', expectReturn: false,
 });
 
+// Running it twice in one process must migrate once and then stop. The guard
+// is written by the first call here, not seeded — which is what actually
+// happens on the second launch after an upgrade.
+backing.clear();
+backing.set('serverUrl', 'https://taxone.cpa');
+assert.strictEqual(auth.migrateLegacyHost(), true, 'run-twice: first run migrates');
+assert.strictEqual(auth.migrateLegacyHost(), false, 'run-twice: second run is a no-op');
+assert.strictEqual(auth.getServerUrl(), NEW, 'run-twice: serverUrl is stable');
+console.log('  ok  running it twice migrates once and then stops');
+passed++;
+
+// And a host the user deliberately moved to afterwards is not clawed back.
+backing.set('serverUrl', 'https://otherfirm.quework.app');
+assert.strictEqual(auth.migrateLegacyHost(), false, 'run-twice: still a no-op');
+assert.strictEqual(auth.getServerUrl(), 'https://otherfirm.quework.app', 'run-twice: the later choice survives');
+console.log('  ok  a host chosen after the migration is left alone');
+passed++;
+
 Module._load = origLoad;
 console.log(`\n${passed} passed`);

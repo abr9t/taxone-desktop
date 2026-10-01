@@ -2,22 +2,35 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, Notification } = require('electron');
 const path = require('path');
-const fs = require('fs');
+
+// ─── userData pin ─────────────────────────────────────────────────
+//
+// This directory name is an IDENTIFIER, not branding. Do not "fix" it to
+// match the Quework display name.
+//
+// Electron derives userData from productName, and electron-store resolves
+// its directory once, at construction time, from app.getPath('userData').
+// Every store in this app is constructed at module load, so the pin has to
+// run before the first require() below that pulls one in — which is why it
+// sits here rather than next to app.setName().
+//
+// Every existing install keeps its serverUrl, watch folder, token fallback
+// and upload queue under "TaxOne Desktop". Letting the renamed productName
+// pick the directory instead points the app at a new, empty one: the legacy
+// host migration finds nothing to migrate, and every user lands on the login
+// screen with their upload queue gone.
+const USER_DATA_DIR = 'TaxOne Desktop';
+app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR));
+
 const auth = require('./auth');
 const watcher = require('./watcher');
 const uploader = require('./uploader');
 const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
+const { debugLog } = require('./debug-log');
+const { reconcileAutoLaunch, AUTO_LAUNCH_ENTRY_NAME } = require('./auto-launch');
 const Store = require('electron-store');
 const appStore = new Store();
-
-// Debug log to file (Windows Electron doesn't pipe to terminal)
-const _debugLog = path.join(__dirname, '..', 'debug.log');
-function debugLog(...args) {
-    const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`;
-    fs.appendFileSync(_debugLog, line);
-    console.log(...args);
-}
 
 let tray = null;
 let trayMenu = null;
@@ -53,14 +66,53 @@ app.on('second-instance', (event, commandLine) => {
     }
 });
 
+// A protocol link is attacker-supplyable, and even a well-formed Quework URL
+// points at some other firm's server. Re-pointing an install that is already
+// paired would send the next upload — and the bearer token behind it — to
+// whoever sent the link, so ask first.
+async function confirmHostChange(nextUrl) {
+    const current = auth.getServerUrl();
+    if (!current || current === nextUrl) return true;
+
+    const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Cancel', 'Change server'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Change Quework server?',
+        message: 'This link wants to point Quework Desktop at a different server.',
+        detail: `Currently connected to:\n${current}\n\n`
+            + `The link asks for:\n${nextUrl}\n\n`
+            + "Only continue if you started this from your own firm's Quework site.",
+    });
+    return response === 1;
+}
+
+// Returns the canonical URL that was stored, or null if the link was
+// rejected or the user declined. Every protocol-borne URL goes through here.
+async function applyServerUrlFromLink(rawUrl) {
+    const result = auth.validateServerUrl(rawUrl);
+    if (!result.ok) {
+        debugLog(`[protocol] Rejected server URL: ${result.error}`);
+        dialog.showErrorBox('Quework Desktop', `This link was ignored.\n\n${result.error}`);
+        return null;
+    }
+    if (!(await confirmHostChange(result.url))) {
+        debugLog('[protocol] Server change declined by the user');
+        return null;
+    }
+    auth.saveServerUrl(result.url);
+    return result.url;
+}
+
 async function handleAuthUrl(url) {
     try {
         const parsed = new URL(url);
 
         if (parsed.hostname === 'connect') {
-            const serverUrl = parsed.searchParams.get('url');
-            if (serverUrl) {
-                await auth.saveServerUrl(serverUrl);
+            const rawServerUrl = parsed.searchParams.get('url');
+            if (rawServerUrl && !(await applyServerUrlFromLink(rawServerUrl))) {
+                return;
             }
             const token = await auth.getToken();
             if (token) {
@@ -77,12 +129,16 @@ async function handleAuthUrl(url) {
 
         // Default: auth handler (taxone-desktop://auth?token=X&url=Y)
         const token = parsed.searchParams.get('token');
-        const serverUrl = parsed.searchParams.get('url');
+        const rawServerUrl = parsed.searchParams.get('url');
 
-        if (!token || !serverUrl) return;
+        if (!token || !rawServerUrl) return;
+
+        // Host first: a token that arrived alongside a rejected host has no
+        // business being persisted.
+        const serverUrl = await applyServerUrlFromLink(rawServerUrl);
+        if (!serverUrl) return;
 
         await auth.saveToken(token);
-        await auth.saveServerUrl(serverUrl);
         uploader.configure(serverUrl, token);
 
         if (loginWindow && !loginWindow.isDestroyed()) {
@@ -110,23 +166,50 @@ async function handleAuthUrl(url) {
 
 app.setName('Quework Desktop');
 
-app.setAppUserModelId('com.taxone.desktop');
+// Also the registry value name Electron writes the autostart entry under —
+// see src/auto-launch.js, which owns the constant.
+app.setAppUserModelId(AUTO_LAUNCH_ENTRY_NAME);
 
 app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock.hide();
 
     if (!appStore.get('hasLaunched')) {
-        app.setLoginItemSettings({ openAtLogin: true });
+        app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
         appStore.set('hasLaunched', true);
     }
 
-    createTray();
+    reconcileAutoLaunch();
 
-    // Re-point legacy installs still persisted against the old taxone.cpa
-    // host before anything reads serverUrl. One-time, guarded (see auth.js).
-    if (auth.migrateLegacyHost()) {
-        debugLog('[migration] Re-pointed persisted host taxone.cpa -> caputa.quework.app');
+    // Both migrations are one-time and guarded (see auth.js and watcher.js),
+    // and each is wrapped on its own. They write to electron-store, which
+    // touches the disk and can fail — a locked file, a full volume, a
+    // corrupted JSON. A throw here would reject the whenReady promise and
+    // take the tray, the watcher and the upload queue with it, which is far
+    // worse than an un-migrated setting. Separate blocks so a failed host
+    // migration does not also skip the watch folder one.
+    try {
+        if (auth.migrateLegacyHost()) {
+            debugLog('[migration] Re-pointed persisted host taxone.cpa -> caputa.quework.app');
+        }
+    } catch (err) {
+        debugLog(`[migration] Host migration failed, leaving serverUrl alone: ${err.message}`);
     }
+
+    try {
+        if (watcher.migrateLegacyWatchPath()) {
+            debugLog('[migration] Pinned watch folder to the legacy ~/TaxoneWatch');
+        }
+    } catch (err) {
+        debugLog(`[migration] Watch folder migration failed, leaving watchPath alone: ${err.message}`);
+    }
+
+    // After the migrations, not before: createTray() renders the watch path
+    // into the tray menu, and on an install that is not signed in nothing
+    // rebuilds that menu afterwards — startWatching() is what normally calls
+    // updateTrayMenu() again, and it never runs. Creating the tray first
+    // would leave such a user looking at ~/QueworkWatch while the app
+    // actually watches ~/TaxoneWatch.
+    createTray();
 
     const token = await auth.getToken();
     const serverUrl = auth.getServerUrl();
@@ -449,13 +532,22 @@ function startWatching() {
 // Login
 ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
     try {
-        const isValid = await uploader.verifyTokenWith(serverUrl, token);
+        // Before verifyTokenWith, not after: that call sends the token to the
+        // host, so an unvalidated URL leaks it just as effectively as a
+        // malicious protocol link would.
+        const check = auth.validateServerUrl(serverUrl);
+        if (!check.ok) {
+            return { success: false, error: check.error };
+        }
+        const canonicalUrl = check.url;
+
+        const isValid = await uploader.verifyTokenWith(canonicalUrl, token);
         if (!isValid) {
             return { success: false, error: 'Invalid token. Check your token and server URL.' };
         }
         await auth.saveToken(token);
-        await auth.saveServerUrl(serverUrl);
-        uploader.configure(serverUrl, token);
+        auth.saveServerUrl(canonicalUrl);
+        uploader.configure(canonicalUrl, token);
 
         startWatching();
         initMigrationQueue();
@@ -514,7 +606,9 @@ ipcMain.handle('settings:get-auto-launch', async () => {
 });
 
 ipcMain.handle('settings:set-auto-launch', async (_event, enabled) => {
-    app.setLoginItemSettings({ openAtLogin: enabled });
+    // Explicit path so enabling always records the running executable,
+    // rather than whatever process.execPath defaulted to at the time.
+    app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath });
     return { success: true };
 });
 
@@ -600,7 +694,13 @@ ipcMain.handle('get-server-url', async () => {
     return auth.getServerUrl();
 });
 
-// Open external URL (for browser sign-in)
-ipcMain.handle('open-external', async (_event, url) => {
-    shell.openExternal(url);
+// Browser sign-in handoff. This used to be a general "open any URL the
+// renderer asks for" channel; it has only ever had one caller, so narrow it
+// to that caller and put the server URL through the same allowlist as the
+// persisted host.
+ipcMain.handle('auth:open-browser-sign-in', async (_event, serverUrl) => {
+    const result = auth.validateServerUrl(serverUrl);
+    if (!result.ok) return { success: false, error: result.error };
+    shell.openExternal(`${result.url}/desktop/authorize`);
+    return { success: true };
 });
