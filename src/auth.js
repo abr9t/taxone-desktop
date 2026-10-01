@@ -55,8 +55,16 @@ try {
     console.warn('keytar not available — using encrypted electron-store for token storage');
 }
 
+// Set when clearToken() could not delete the keychain entry. The keychain
+// still holds a token that was meant to be gone — after a rejected host it
+// may already have been sent there — so while this is set getToken() does
+// not read the keychain at all, only the electron-store fallback, which
+// clearToken() did delete. Removed only once saveToken() has put a new token
+// in the keychain, so the revoked one can never be read back.
+const KEYCHAIN_REVOKED = '_keychainTokenRevoked';
+
 async function getToken() {
-    if (keytar) {
+    if (keytar && !store.get(KEYCHAIN_REVOKED)) {
         try {
             return await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
         } catch {
@@ -72,8 +80,10 @@ async function saveToken(token) {
     if (keytar) {
         try {
             await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, token);
+            store.delete(KEYCHAIN_REVOKED);
         } catch {
-            // keytar failed — token is still in electron-store
+            // keytar failed — token is still in electron-store, and a
+            // revoked keychain entry stays unread
         }
     }
 }
@@ -82,8 +92,9 @@ async function clearToken() {
     if (keytar) {
         try {
             await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
-        } catch {
-            // ignore
+        } catch (err) {
+            store.set(KEYCHAIN_REVOKED, true);
+            debugLog(`[auth] Could not delete the keychain token (${err.message}); marked it revoked so it is never read again`);
         }
     }
     store.delete('_token');

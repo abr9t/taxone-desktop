@@ -30,12 +30,13 @@ function freshSeen() {
 // ─── Fake Electron ────────────────────────────────────────────────
 let readyResolve;
 let handlers;
+let appListeners;
 const electron = {
     app: {
         isPackaged: true,
         getPath: n => (n === 'appData' ? 'C:/fake/AppData/Roaming' : 'C:/fake/AppData/Roaming/TaxOne Desktop'),
         setPath() {}, setAsDefaultProtocolClient() {}, requestSingleInstanceLock: () => true,
-        quit() {}, on() {}, setName() {}, setAppUserModelId() {},
+        quit() {}, on: (ev, fn) => { appListeners[ev] = fn; }, setName() {}, setAppUserModelId() {},
         whenReady: () => new Promise(r => { readyResolve = r; }),
         setLoginItemSettings() {}, getLoginItemSettings: () => ({ openAtLogin: false, launchItems: [] }),
     },
@@ -97,6 +98,7 @@ async function launch({ serverUrl, token }) {
     rec.calls.length = 0;
     seen = freshSeen();
     handlers = {};
+    appListeners = {};
     if (serverUrl) stubs.store.set('serverUrl', serverUrl);
     if (token) {
         stubs.store.set('_token', token);
@@ -153,6 +155,29 @@ async function main() {
         assert.strictEqual(handlers['migration:start'], undefined, 'no queue IPC registered');
         assert.deepStrictEqual(rec.calls, [], 'still nothing sent');
         ok(`stored ${bad}: search, folders and upload IPC answer without a request`);
+    }
+
+    // ─── A keychain that will not let go of the token ──────────────
+    {
+        const keytar = require('keytar');
+        const origDelete = keytar.deletePassword;
+        keytar.deletePassword = async () => { throw new Error('keychain locked'); };
+        try {
+            await launch({ serverUrl: 'https://evil.example', token: 'tok' });
+        } finally {
+            keytar.deletePassword = origDelete;
+        }
+        assert.strictEqual(stubs.keychain.size, 1, 'precondition: the keychain delete really failed');
+        assert.deepStrictEqual(seen.windows.map(w => w.file), ['login.html']);
+
+        // A connect link afterwards must not find a signed-in user: it opens
+        // File Upload for one, the sign-in window otherwise.
+        appListeners['second-instance']({}, ['Quework Desktop.exe', 'taxone-desktop://connect']);
+        await tick();
+        assert.deepStrictEqual(seen.windows.map(w => w.file), ['login.html'],
+            'the link must not open File Upload on the strength of the revoked keychain token');
+        assert.deepStrictEqual(rec.calls, [], 'nothing sent');
+        ok('keychain delete fails: a later connect link still finds the user signed out');
     }
 
     // ─── Until a valid host is stored again ────────────────────────

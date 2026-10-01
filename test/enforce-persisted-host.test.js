@@ -94,6 +94,40 @@ async function main() {
         }
         assert.strictEqual(stubs.store.has('_token'), false);
         ok('a failing keychain delete still clears the _token fallback');
+
+        // The keychain half: the entry is still there, but it is never read.
+        assert.strictEqual(stubs.keychain.get(KEY), 'kc', 'precondition: the delete really failed');
+        assert.strictEqual(await auth.getToken(), null, 'the revoked keychain token must not come back');
+        assert.strictEqual(stubs.store.get('_keychainTokenRevoked'), true);
+        assert.ok(stubs.logs.some(l => l.includes('[auth] Could not delete the keychain token') && l.includes('keychain locked')),
+            'the failure is logged, not swallowed');
+        ok('a failing keychain delete: logged, and getToken() no longer returns that token');
+
+        // Signing in again stores a new token and lifts the revocation.
+        await auth.saveToken('fresh');
+        assert.strictEqual(await auth.getToken(), 'fresh');
+        assert.strictEqual(stubs.store.has('_keychainTokenRevoked'), false);
+        ok('a later successful saveToken() lifts the revocation and returns the new token');
+    }
+    {
+        // …but not if the new token never reached the keychain: the old one
+        // would be read back in its place.
+        reset({ serverUrl: 'https://evil.example', keychainToken: 'old', storeToken: 'old' });
+        const keytar = require('keytar');
+        const origDelete = keytar.deletePassword;
+        const origSet = keytar.setPassword;
+        keytar.deletePassword = async () => { throw new Error('keychain locked'); };
+        keytar.setPassword = async () => { throw new Error('keychain locked'); };
+        try {
+            await auth.enforcePersistedServerUrl();
+            await auth.saveToken('fresh');
+        } finally {
+            keytar.deletePassword = origDelete;
+            keytar.setPassword = origSet;
+        }
+        assert.strictEqual(stubs.keychain.get(KEY), 'old', 'precondition: the old token is still in the keychain');
+        assert.strictEqual(await auth.getToken(), 'fresh', 'the new token, from the fallback — never the revoked one');
+        ok('a failed keychain write keeps the revocation: the fallback token is used, not the revoked one');
     }
 
     // ─── Accepted hosts ────────────────────────────────────────────
