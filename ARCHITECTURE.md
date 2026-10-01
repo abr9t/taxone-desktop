@@ -112,7 +112,22 @@ tracked in `BACKLOG.md`.
   - `checkServerIdentity`, `setCertificateVerifyProc`, a `'certificate-error'`
     handler and the `ignore-certificate-errors` switch.
 
-  It cannot catch runtime-built names or `eval`; its header lists the limits.
+  **The tripwire is a tripwire, not a boundary.** It catches the line that
+  shipped and its obvious variants. It does not prove verification is on, and
+  it is easy to get past on purpose, by any of these:
+  - a value continued on the next line;
+  - code inside a template `${…}`;
+  - `Reflect.set` / `Object.defineProperty` with a string key;
+  - `??=` / `||=`;
+  - unicode-escaped identifiers;
+  - runtime-built names;
+  - `eval`.
+
+  Its header lists these. **The control is the factory pin:**
+  `createApiClient()` builds every client with `rejectUnauthorized: true`, which
+  wins over the environment, and `test/tls-verification.test.js` proves that
+  against a real TLS server. Code review owns everything the tripwire cannot
+  see.
 
 ---
 

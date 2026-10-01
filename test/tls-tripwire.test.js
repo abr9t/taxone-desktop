@@ -27,7 +27,26 @@
  * Allows reading the variable, `delete process.env.NODE_TLS_REJECT_UNAUTHORIZED`,
  * and main.js's log line naming it.
  *
- * Cannot catch — code review owns these:
+ * This is a TRIPWIRE, NOT A BOUNDARY. It catches the line that shipped and
+ * its obvious variants; it does not prove verification is on. The control is
+ * the pinned agent in uploader.createApiClient() (rejectUnauthorized: true,
+ * which wins over the environment), and test/tls-verification.test.js proves
+ * that against a real TLS server.
+ *
+ * Known evasions — each checked to pass this scanner unflagged; code review
+ * owns them:
+ *   - a multi-line value tail: `rejectUnauthorized: true` at the end of a
+ *     line, with `&& !isDev` (or `? false : true`) on the next;
+ *   - template interpolation: code inside `${…}` is read as string content,
+ *     e.g. `${agent.options.rejectUnauthorized = false}`, and a template-built
+ *     name such as process.env[`NODE_TLS_${'REJECT'}_UNAUTHORIZED`];
+ *   - string-key setters: Reflect.set(process.env,
+ *     'NODE_TLS_REJECT_UNAUTHORIZED', '0'),
+ *     Object.defineProperty(opts, 'rejectUnauthorized', { value: false });
+ *   - logical assignment: `??=` and `||=` (e.g.
+ *     process.env.NODE_TLS_REJECT_UNAUTHORIZED ??= '0',
+ *     opts.rejectUnauthorized ||= false);
+ *   - unicode-escaped identifiers: rejectUnauthorized: false;
  *   - names built at runtime: process.env[name] = '0', 'rejectUn' + 'authorized';
  *   - eval, new Function, or code loaded from outside the scanned files;
  *   - a regex literal containing a quote, which this light lexer reads as the
