@@ -50,3 +50,22 @@
   logged.
 - scripts/dev.js sets NODE_ENV=development, which nothing in the app reads.
   Drop it, or use it.
+- Code signing (deferred, see ARCHITECTURE.md "Code signing — deferred").
+  Unsigned updates are trusted on GitHub account security and the release
+  pipeline alone. Revisit when installs grow past a handful of firms or a
+  second maintainer gets write access: Azure Trusted Signing (key not
+  exportable) or an OV certificate on a hardware token; electron-builder then
+  writes publisherName and electron-updater refuses installers from anyone
+  else. Plan the first signed release: it is installed by apps whose
+  app-update.yml has no publisherName yet.
+- An install that is never quit never installs an update: Windows shutdown
+  does not emit quit, and nothing restarts on its own. If installs lag,
+  consider installing a downloaded update at the next launch, before the
+  queue resumes.
+- The tag build is a fresh build of the tested commit, not the tested bytes.
+  Consider promoting the dry-run artifact (or comparing its sha512 with the
+  tag build's latest.yml) so the installer that ships is the one tested.
+- npm audit --omit=dev reports five pre-existing advisories this branch does
+  not touch: axios (direct), form-data and follow-redirects (via axios),
+  fast-uri (via electron-store) and xlsx (direct, no fix upstream). Update
+  axios, and replace or contain xlsx (it only writes the queue export).

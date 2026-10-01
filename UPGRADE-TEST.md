@@ -8,6 +8,10 @@ a real v1.1.5 install does.
 Run it on Windows, start to finish, in order. Step 0 describes the fixture; it
 is **run** at step 1.2, after v1.1.5 is installed.
 
+Section 6 is the gate for **tagging**: the automatic update, tested on the
+release candidate from the `dry-run` workflow job, before anything is
+published.
+
 Every command below is PowerShell. Paste each block whole. No command prints
 the token: anything that shows `taxone-settings.json` drops `_token` first.
 
@@ -625,3 +629,511 @@ Run step 0 again before re-running, then step 2's baseline block again. The
 migration guards are one-shot, a half-migrated store is not a valid fixture,
 and the restore deletes the `debug.log` that the step 3 log checks count
 against.
+
+---
+
+## 6. Automatic update — the release candidate, before tagging
+
+The gate for tagging v1.2.0 with the updater in it. It tests the **release
+candidate** — the installer the `dry-run` job built from the final commit —
+by updating it to a throwaway **1.2.1 built from the same commit**, served
+from this machine. Nothing is published and nothing is tagged. Tag only after
+every check here passes.
+
+What it proves: the download is checked against `latest.yml`; *Restart to
+Update* refuses while a file is pending; a successful check that stops
+offering the version withdraws it; the silent install stays per-user, lands
+in the same directory under the same uninstall key, and relaunches; the
+app's stored data survives; the first launch of the new version runs no
+early check. What it does not prove: the GitHub and TLS leg (`github.com`,
+Windows certificate store) — that is 6.12, after the real release is
+published.
+
+Run every block in **one** PowerShell window, in order (the local update
+server runs in a second one). If that window is closed, run 6.0 again. Each
+check prints PASS or FAIL; any FAIL stops the release. No block prints the
+token.
+
+### 6.0 Session helpers
+
+```powershell
+$root = "$env:TEMP\quework-update-test"
+$ud   = "$env:APPDATA\TaxOne Desktop"
+$log  = "$ud\debug.log"
+$guid = 'fb2f6324-7194-5753-aa0e-d1c9da0ecd6e'
+$un   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$guid"
+$inst = "HKCU:\Software\$guid"
+
+function Get-Sha512Base64([string]$Path) {
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash($stream))
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+# A release folder: latest.yml names $Version and matches the installer
+# beside it, the installer's version resource says $Version, and the
+# blockmap is there.
+function Test-ReleaseFolder([string]$Dir, [string]$Version) {
+    $yml  = Get-Content -LiteralPath "$Dir\latest.yml"
+    $ver  = ($yml | Select-String -Pattern '^version:\s*(\S+)').Matches[0].Groups[1].Value
+    $want = ($yml | Select-String -Pattern '^sha512:\s*(\S+)').Matches[0].Groups[1].Value
+    $have = Get-Sha512Base64 "$Dir\TaxOne-Desktop-Setup.exe"
+    $res  = (Get-Item -LiteralPath "$Dir\TaxOne-Desktop-Setup.exe").VersionInfo.FileVersion
+    if ($ver -eq $Version) { "version  PASS: latest.yml says $ver" } else { "version  FAIL: latest.yml says $ver, expected $Version" }
+    if ($want -eq $have) { 'sha512   PASS: latest.yml matches the installer' } else { "sha512   FAIL: latest.yml $want, installer $have" }
+    if ($res -eq $Version) { "resource PASS: installer FileVersion $res" } else { "resource FAIL: installer FileVersion $res, expected $Version" }
+    if (Test-Path -LiteralPath "$Dir\TaxOne-Desktop-Setup.exe.blockmap") { 'blockmap PASS' } else { 'blockmap FAIL: missing' }
+}
+
+# Lines debug.log gained since $Mark (a line count taken earlier).
+function Get-NewLogLines([int]$Mark) {
+    @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Select-Object -Skip $Mark)
+}
+function Get-LogMark {
+    @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue).Count
+}
+
+# Every electron-store file in userData except migration-queue.json, key by
+# key. Values are held as JSON strings and never printed: _token is compared,
+# not shown.
+function Get-StoreSnapshot {
+    $snap = @{}
+    Get-ChildItem -LiteralPath $ud -Filter *.json -File | Where-Object { $_.Name -ne 'migration-queue.json' } | ForEach-Object {
+        $props = @{}
+        $obj = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+        foreach ($p in $obj.PSObject.Properties) { $props[$p.Name] = ConvertTo-Json -InputObject $p.Value -Compress -Depth 20 }
+        $snap[$_.Name] = $props
+    }
+    $snap
+}
+
+function Get-RunningVersion {
+    $p = Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($p) { (Get-Item -LiteralPath $p.Path).VersionInfo.FileVersion } else { 'not running' }
+}
+```
+
+### 6.1 Get the release candidate
+
+1. On GitHub: **Actions → Build and Release → Run workflow**, on the branch
+   being released, at its final commit. When the `dry-run` job is green,
+   download the artifact `release-candidate-<commit sha>` to `Downloads`.
+2. Paste the full commit SHA from the artifact's name, then:
+
+```powershell
+$sha = 'PASTE-THE-40-CHARACTER-COMMIT-SHA'
+$zip = "$env:USERPROFILE\Downloads\release-candidate-$sha.zip"
+$rc  = "$root\v1.2.0"
+if ($sha -notmatch '^[0-9a-f]{40}$') { throw 'STOP: paste the full commit SHA' }
+if (-not (Test-Path -LiteralPath $zip)) { throw "STOP: no artifact at $zip" }
+if (Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue) { throw 'STOP: quit the app from the tray first' }
+if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+New-Item -ItemType Directory -Path $rc | Out-Null
+Expand-Archive -LiteralPath $zip -DestinationPath $rc
+Get-ChildItem -LiteralPath $rc | ForEach-Object { "  $($_.Name)  $($_.Length)" }
+Test-ReleaseFolder $rc '1.2.0'
+```
+
+Expected: exactly `latest.yml`, `TaxOne-Desktop-Setup.exe` and
+`TaxOne-Desktop-Setup.exe.blockmap`, and four PASS lines.
+
+### 6.2 Build the throwaway 1.2.1 from the same commit
+
+Same commit, only the version changed, in a clean export — never in your
+working copy. Set `$repo` to your clone first.
+
+```powershell
+$repo = "$env:USERPROFILE\PhpstormProjects\taxone-desktop"
+$src  = "$root\build-1.2.1"
+$upd  = "$root\v1.2.1"
+git -C $repo fetch origin
+if ((git -C $repo cat-file -t $sha) -ne 'commit') { throw "STOP: $sha is not a commit in $repo" }
+git -C $repo archive --format=zip -o "$root\src.zip" $sha
+Expand-Archive -LiteralPath "$root\src.zip" -DestinationPath $src
+Push-Location -LiteralPath $src
+try {
+    npm version 1.2.1 --no-git-tag-version
+    if ($LASTEXITCODE -ne 0) { throw 'STOP: npm version failed' }
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw 'STOP: npm ci failed' }
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw 'STOP: npm run build failed' }
+} finally {
+    Pop-Location
+}
+New-Item -ItemType Directory -Path $upd | Out-Null
+Copy-Item -LiteralPath "$src\dist\TaxOne-Desktop-Setup.exe", "$src\dist\TaxOne-Desktop-Setup.exe.blockmap", "$src\dist\latest.yml" -Destination $upd
+Copy-Item -LiteralPath "$upd\latest.yml" -Destination "$root\latest.yml.good"
+Test-ReleaseFolder $upd '1.2.1'
+```
+
+Expected: four PASS lines. (`npm run build` is `--publish never`: this
+build cannot publish anything.)
+
+### 6.3 Start the local update server — second PowerShell window
+
+A 30-line static server on `127.0.0.1:8765`, serving `$root` the way GitHub
+lays out a release (`v1.2.0\…`, `v1.2.1\…`). It prints every request.
+
+```powershell
+@'
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const root = path.resolve(process.argv[2]);
+http.createServer((req, res) => {
+    const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    const file = path.join(root, path.normalize(rel));
+    if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        console.log(`404 ${req.method} ${rel}`);
+        res.writeHead(404);
+        return res.end();
+    }
+    const size = fs.statSync(file).size;
+    const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
+    if (range) {
+        const start = Number(range[1]);
+        const end = range[2] ? Number(range[2]) : size - 1;
+        console.log(`206 ${req.method} ${rel} ${start}-${end}`);
+        res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes' });
+        return fs.createReadStream(file, { start, end }).pipe(res);
+    }
+    console.log(`200 ${req.method} ${rel}`);
+    res.writeHead(200, { 'Content-Length': size, 'Accept-Ranges': 'bytes' });
+    if (req.method === 'HEAD') return res.end();
+    fs.createReadStream(file).pipe(res);
+}).listen(8765, '127.0.0.1', () => console.log(`serving ${root} on http://127.0.0.1:8765/`));
+'@ | Set-Content -LiteralPath "$env:TEMP\quework-update-server.js" -Encoding ASCII
+node "$env:TEMP\quework-update-server.js" "$env:TEMP\quework-update-test"
+```
+
+Expected: `serving …\quework-update-test on http://127.0.0.1:8765/`. Leave it
+running until 6.11.
+
+### 6.4 Install the release candidate and point it at the local server
+
+1. Run `$rc\TaxOne-Desktop-Setup.exe` (Explorer, or `& "$rc\TaxOne-Desktop-Setup.exe"`).
+   SmartScreen warns — the build is unsigned; *More info → Run anyway*. Let
+   the finish page launch the app, then **quit it from the tray**.
+2. The install is per-user and its updater started quietly:
+
+```powershell
+$k = Get-ItemProperty -LiteralPath $un -ErrorAction SilentlyContinue
+$dir = (Get-ItemProperty -LiteralPath $inst -ErrorAction SilentlyContinue).InstallLocation
+if ($k.DisplayName -eq 'Quework Desktop 1.2.0') { 'PASS: HKCU uninstall entry is Quework Desktop 1.2.0' } else { "FAIL: HKCU uninstall entry is '$($k.DisplayName)'" }
+if ($dir -and $dir.StartsWith("$env:LOCALAPPDATA\", [StringComparison]::OrdinalIgnoreCase)) { "PASS: InstallLocation is per-user: $dir" } else { "FAIL: InstallLocation is '$dir'" }
+$v = (Get-Item -LiteralPath (Join-Path $dir 'Quework Desktop.exe')).VersionInfo.FileVersion
+if ($v -eq '1.2.0') { 'PASS: installed exe is 1.2.0' } else { "FAIL: installed exe is $v" }
+$cfg = Get-Content -LiteralPath "$ud\config.json" -Raw | ConvertFrom-Json
+if ($cfg.lastLaunchedVersion -eq '1.2.0') { 'PASS: lastLaunchedVersion 1.2.0' } else { "FAIL: lastLaunchedVersion is '$($cfg.lastLaunchedVersion)'" }
+$lines = @(Get-Content -LiteralPath $log)
+$started = @($lines | Where-Object { $_ -match '\[updater\] Started for 1\.2\.0' })
+$first   = @($lines | Where-Object { $_ -match '\[updater\] First launch of this version' })
+if ($started.Count -ge 1 -and $first.Count -ge 1) { 'PASS: updater started; first launch, no early check' } else { "FAIL: $($started.Count) 'Started for 1.2.0', $($first.Count) 'First launch' line(s)" }
+$yml = Join-Path $dir 'resources\app-update.yml'
+$y = Get-Content -LiteralPath $yml -Raw
+if ($y -match 'provider:\s*github' -and $y -match 'owner:\s*abr9t' -and $y -match 'repo:\s*taxone-desktop' -and $y -notmatch 'token') { 'PASS: app-update.yml is github abr9t/taxone-desktop, no token' } else { "FAIL: app-update.yml:`n$y" }
+```
+
+3. Point the installed app at the local server. The update replaces this
+   file, so the change undoes itself in 6.8:
+
+```powershell
+if (Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue) { throw 'STOP: quit the app from the tray first' }
+Copy-Item -LiteralPath $yml -Destination "$root\app-update.yml.rc"
+@'
+provider: generic
+url: http://127.0.0.1:8765/v1.2.1/
+useMultipleRangeRequest: false
+updaterCacheDirName: taxone-desktop-updater
+'@ | Set-Content -LiteralPath $yml -Encoding ASCII
+Get-Content -LiteralPath $yml
+```
+
+### 6.5 A wrong sha512 offers nothing
+
+```powershell
+$wrong = ('A' * 86) + '=='
+Get-Content -LiteralPath "$root\latest.yml.good" | ForEach-Object { $_ -replace '^(\s*sha512:\s*)\S+$', "`${1}$wrong" } | Set-Content -LiteralPath "$upd\latest.yml" -Encoding ASCII
+Select-String -LiteralPath "$upd\latest.yml" -Pattern 'sha512' | ForEach-Object { $_.Line }
+$mark = Get-LogMark
+```
+
+Start Quework Desktop from the Start menu. Tray → **Check for Updates**. The
+server window shows `latest.yml` and the installer being fetched. Wait until
+it is quiet (a minute is plenty), then:
+
+```powershell
+$new = Get-NewLogLines $mark
+$mismatch = @($new | Where-Object { $_ -match 'sha512 checksum mismatch' })
+$ready    = @($new | Where-Object { $_ -match '\[updater\] 1\.2\.1 downloaded and verified' })
+if ($mismatch.Count -ge 1 -and $ready.Count -eq 0) { 'PASS: the installer was rejected on its sha512 and nothing was offered' } else { "FAIL: $($mismatch.Count) mismatch line(s), $($ready.Count) 'downloaded and verified' line(s)" }
+```
+
+- [ ] The tray menu has **no** *Restart to Update* item.
+
+### 6.6 A pending queue file makes the restart refuse
+
+The queue only holds a file *pending* while it cannot upload it, so this
+step runs **offline**, with one throwaway file added to the queue for client
+id `0` (no such client — if it ever reached the server it would be refused,
+not filed). The real `migration-queue.json` is backed up first and restored
+in 6.11.
+
+1. **Quit the app from the tray.** Restore the good `latest.yml` and add the
+   test file:
+
+```powershell
+if (Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue) { throw 'STOP: quit the app from the tray first' }
+if (-not (Test-Path -LiteralPath "$ud\migration-queue.json")) { throw 'STOP: no migration-queue.json; sign in and open File Upload once first' }
+Copy-Item -LiteralPath "$root\latest.yml.good" -Destination "$upd\latest.yml" -Force
+Test-ReleaseFolder $upd '1.2.1'
+Copy-Item -LiteralPath "$ud\migration-queue.json" -Destination "$root\migration-queue.json.bak"
+$testFile = "$root\pending-test\update-test.txt"
+New-Item -ItemType Directory -Path (Split-Path $testFile -Parent) -Force | Out-Null
+Set-Content -LiteralPath $testFile -Value 'Quework Desktop update test. Safe to delete.' -Encoding ASCII
+$q = Get-Content -LiteralPath "$ud\migration-queue.json" -Raw | ConvertFrom-Json
+$entry = [pscustomobject]@{
+    id = 'update-test-0001'; absolutePath = $testFile; relativePath = 'update-test.txt'
+    size = (Get-Item -LiteralPath $testFile).Length; clientId = 0; clientName = 'UPDATE TEST'
+    folderName = 'pending-test'; folderPath = ''; filename = 'update-test.txt'
+    status = 'pending'; retries = 0; error = $null; documentId = $null; uploadedAt = $null
+}
+$q.files = @(@($q.files) | Where-Object { $null -ne $_ }) + $entry
+$q.status = 'paused'
+# No BOM: electron-store refuses a JSON file that starts with one.
+[IO.File]::WriteAllText("$ud\migration-queue.json", ($q | ConvertTo-Json -Depth 20 -Compress), (New-Object Text.UTF8Encoding $false))
+"files in queue: $(@($q.files).Count)"
+```
+
+2. **Go offline** (airplane mode, or disconnect the network). The local
+   server still answers. Confirm:
+
+```powershell
+$online = $true
+try {
+    $null = Invoke-WebRequest -Uri 'https://caputa.quework.app' -UseBasicParsing -TimeoutSec 10
+} catch {
+    $online = [bool]$_.Exception.Response
+}
+if ($online) { 'STOP: caputa.quework.app answered; this machine is still online' } else { 'PASS: offline' }
+```
+
+3. Start Quework Desktop. It resumes the queue (it ignores a saved pause) and
+   the test file starts failing to upload and retrying.
+4. In **File Upload → Queue**, click **⏸ Pause**. If the file already shows
+   *failed* (its retries run out after about a minute), click **↻ Retry
+   Failed**, then **⏸ Pause**. Then:
+
+```powershell
+$q = Get-Content -LiteralPath "$ud\migration-queue.json" -Raw | ConvertFrom-Json
+$t = @($q.files | Where-Object { $_.id -eq 'update-test-0001' })
+"queue status: $($q.status)"
+"test file:    $($t.status) — $($t.error)"
+if ($q.status -eq 'paused' -and $t.Count -eq 1 -and $t[0].status -eq 'pending') { 'PASS: the test file is pending in a paused queue' } else { 'STOP: not pending in a paused queue; repeat step 4' }
+$mark = Get-LogMark
+```
+
+5. Tray → **Check for Updates**. Wait for the notification *Quework Desktop
+   1.2.1 is ready*. Tray → **Restart to Update (1.2.1)**. A dialog says the
+   app will not restart while files are uploading or waiting, and names
+   *1 file(s) waiting in the upload queue*. Click OK, then:
+
+```powershell
+$new = Get-NewLogLines $mark
+$ready   = @($new | Where-Object { $_ -match '\[updater\] 1\.2\.1 downloaded and verified' })
+$refused = @($new | Where-Object { $_ -match 'Restart to install 1\.2\.1 refused: .*1 file\(s\) waiting in the upload queue' })
+if ($ready.Count -ge 1) { 'PASS: 1.2.1 downloaded and passed its sha512' } else { 'FAIL: no "1.2.1 downloaded and verified" line' }
+if ($refused.Count -eq 1) { 'PASS: the restart was refused, naming the pending file' } else { "FAIL: $($refused.Count) refusal line(s)" }
+$running = Get-RunningVersion
+if ($running -eq '1.2.0') { 'PASS: still running 1.2.0' } else { "FAIL: running version is $running" }
+```
+
+6. In **File Upload → Queue**, click **Skip** on the test file. **Go back
+   online.**
+
+### 6.7 A withdrawn update is not installed
+
+`stagingPercentage: 0` is the pause switch in ARCHITECTURE.md's kill-switch
+table. A successful check that no longer offers 1.2.1 must take it back.
+
+```powershell
+@(Get-Content -LiteralPath "$root\latest.yml.good") + 'stagingPercentage: 0' | Set-Content -LiteralPath "$upd\latest.yml" -Encoding ASCII
+$mark = Get-LogMark
+```
+
+Tray → **Check for Updates** (notification: *1.2.0 is up to date*). Then:
+
+```powershell
+$new = Get-NewLogLines $mark
+$withdrawn = @($new | Where-Object { $_ -match '\[updater\] 1\.2\.1 is no longer offered' })
+if ($withdrawn.Count -eq 1) { 'PASS: 1.2.1 withdrawn after a successful check' } else { "FAIL: $($withdrawn.Count) withdrawal line(s)" }
+```
+
+- [ ] The tray menu no longer has *Restart to Update*.
+
+Offer it again:
+
+```powershell
+Copy-Item -LiteralPath "$root\latest.yml.good" -Destination "$upd\latest.yml" -Force
+$mark = Get-LogMark
+```
+
+Tray → **Check for Updates** (notification: *1.2.1 is ready*), then:
+
+```powershell
+$new = Get-NewLogLines $mark
+if (@($new | Where-Object { $_ -match '\[updater\] 1\.2\.1 downloaded and verified' }).Count -ge 1) { 'PASS: offered again' } else { 'FAIL: not offered again' }
+```
+
+- [ ] *Restart to Update (1.2.1)* is back in the tray menu.
+
+### 6.8 Restart to Update: silent, per-user, in place
+
+Make sure no confirm window is open and nothing is uploading. Record the
+state just before:
+
+```powershell
+$before = @{
+    InstallLocation = (Get-ItemProperty -LiteralPath $inst).InstallLocation
+    TopLevel        = @(Get-ChildItem -LiteralPath $ud -Force | ForEach-Object { $_.Name })
+    Stores          = Get-StoreSnapshot
+}
+"InstallLocation: $($before.InstallLocation)"
+"top-level entries in userData: $($before.TopLevel.Count)"
+$mark = Get-LogMark
+```
+
+Tray → **Restart to Update (1.2.1)**.
+
+- [ ] **No UAC prompt** appeared. The app closed and came back by itself
+      within about a minute, with no installer window.
+
+```powershell
+$guidHklm = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$guid",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$guid",
+    "HKLM:\Software\$guid",
+    "HKLM:\Software\WOW6432Node\$guid"
+) | Where-Object { Test-Path -LiteralPath $_ }
+if ($guidHklm) { "FAIL: per-machine keys exist: $($guidHklm -join ', ')" } else { 'PASS: nothing under HKLM' }
+
+$k = Get-ItemProperty -LiteralPath $un -ErrorAction SilentlyContinue
+if ($k.DisplayName -eq 'Quework Desktop 1.2.1' -and $k.DisplayVersion -eq '1.2.1') { 'PASS: HKCU uninstall entry is Quework Desktop 1.2.1' } else { "FAIL: HKCU uninstall entry is '$($k.DisplayName)' / '$($k.DisplayVersion)'" }
+$all = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -match 'TaxOne|Quework' })
+if ($all.Count -eq 1) { 'PASS: exactly one TaxOne/Quework entry' } else { "FAIL: $($all.Count) TaxOne/Quework entries" }
+
+$dir = (Get-ItemProperty -LiteralPath $inst).InstallLocation
+if ($dir -eq $before.InstallLocation) { "PASS: InstallLocation unchanged: $dir" } else { "FAIL: InstallLocation was $($before.InstallLocation), now $dir" }
+$v = (Get-Item -LiteralPath (Join-Path $dir 'Quework Desktop.exe')).VersionInfo.FileVersion
+if ($v -eq '1.2.1') { 'PASS: installed exe is 1.2.1' } else { "FAIL: installed exe is $v" }
+$running = Get-RunningVersion
+if ($running -eq '1.2.1') { 'PASS: 1.2.1 is running (relaunched)' } else { "FAIL: running version is $running" }
+$y = Get-Content -LiteralPath (Join-Path $dir 'resources\app-update.yml') -Raw
+if ($y -match 'provider:\s*github') { 'PASS: app-update.yml replaced by the update (github again)' } else { "FAIL: app-update.yml:`n$y" }
+
+$new = Get-NewLogLines $mark
+if (@($new | Where-Object { $_ -match '\[updater\] Restarting to install 1\.2\.1' }).Count -eq 1) { 'PASS: restart logged' } else { 'FAIL: no "Restarting to install 1.2.1" line' }
+if (@($new | Where-Object { $_ -match '\[updater\] Started for 1\.2\.1' }).Count -eq 1) { 'PASS: 1.2.1 started its updater' } else { 'FAIL: no "Started for 1.2.1" line' }
+```
+
+### 6.9 The app's data survived
+
+Compared: every electron-store file in `%APPDATA%\TaxOne Desktop`, key by
+key (`taxone-settings.json`, `config.json`, …), and that nothing at the top
+level of the folder disappeared. Not compared: `.updaterId` (written by the
+updater), `migration-queue.json` (the test edited it) and `debug.log` (it
+grows), and Chromium's own state (`Local State`, `Preferences`, caches),
+which Electron rewrites on every launch, update or not. `config.json`'s
+`lastLaunchedVersion` must change, to `1.2.1` — proof that the new version
+ran against this folder.
+
+```powershell
+$after = Get-StoreSnapshot
+$fail = 0
+foreach ($file in $before.Stores.Keys) {
+    if (-not $after.ContainsKey($file)) { "FAIL: $file is gone"; $fail++; continue }
+    $keys = @($before.Stores[$file].Keys) + @($after[$file].Keys) | Sort-Object -Unique
+    foreach ($key in $keys) {
+        if ($file -eq 'config.json' -and $key -eq 'lastLaunchedVersion') { continue }
+        if ($before.Stores[$file][$key] -cne $after[$file][$key]) { "FAIL: $file key '$key' changed"; $fail++ }
+    }
+}
+foreach ($file in $after.Keys) { if (-not $before.Stores.ContainsKey($file)) { "note: new store file $file" } }
+if ($fail -eq 0) { "PASS: $($before.Stores.Count) store file(s) kept every key and value" } else { "FAIL: $fail difference(s) above" }
+
+$now = @(Get-ChildItem -LiteralPath $ud -Force | ForEach-Object { $_.Name })
+$gone = @($before.TopLevel | Where-Object { $now -notcontains $_ })
+if ($gone.Count -eq 0) { 'PASS: nothing at the top of userData disappeared' } else { "FAIL: gone: $($gone -join ', ')" }
+
+$cfg = Get-Content -LiteralPath "$ud\config.json" -Raw | ConvertFrom-Json
+if ($cfg.lastLaunchedVersion -eq '1.2.1') { 'PASS: lastLaunchedVersion 1.2.1' } else { "FAIL: lastLaunchedVersion is '$($cfg.lastLaunchedVersion)'" }
+if (Test-Path -LiteralPath "$ud\.updaterId") { 'note: .updaterId present (expected)' }
+```
+
+### 6.10 The first launch of 1.2.1 is not disturbed
+
+Leave 1.2.1 running, untouched, for **6 minutes** (the early check comes 5
+minutes after a launch that is not a first launch). Then:
+
+```powershell
+$lines = @(Get-Content -LiteralPath $log)
+$at = -1
+for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '\[updater\] Started for 1\.2\.1') { $at = $i } }
+if ($at -lt 0) { 'FAIL: no "Started for 1.2.1" line' } else {
+    $since = @($lines | Select-Object -Skip $at)
+    if (@($since | Where-Object { $_ -match '\[updater\] First launch of this version' }).Count -ge 1) { 'PASS: 1.2.1 knows it is a first launch' } else { 'FAIL: no "First launch of this version" line' }
+    $checks = @($since | Where-Object { $_ -match 'Checking for update' })
+    if ($checks.Count -eq 0) { 'PASS: no update check since 1.2.1 started' } else { "FAIL: $($checks.Count) check(s) since 1.2.1 started" }
+}
+```
+
+- [ ] No update notification appeared.
+
+### 6.11 Put the machine back
+
+The installed app is now a 1.2.1 that will never exist on GitHub: it would
+refuse the real 1.2.0 (no downgrade) and wait for 1.2.2. Put the release
+candidate back, and the real queue:
+
+1. **Quit the app from the tray.** Stop the server (Ctrl+C in its window).
+
+```powershell
+if (Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue) { throw 'STOP: quit the app from the tray first' }
+Copy-Item -LiteralPath "$root\migration-queue.json.bak" -Destination "$ud\migration-queue.json" -Force
+Remove-Item -LiteralPath "$root\pending-test" -Recurse -Force
+Remove-Item -LiteralPath "$env:LOCALAPPDATA\taxone-desktop-updater" -Recurse -Force -ErrorAction SilentlyContinue
+& "$rc\TaxOne-Desktop-Setup.exe"
+```
+
+2. Click through the installer (it installs 1.2.0 over 1.2.1 in the same
+   directory) and let it launch, then:
+
+```powershell
+$dir = (Get-ItemProperty -LiteralPath $inst).InstallLocation
+$v = (Get-Item -LiteralPath (Join-Path $dir 'Quework Desktop.exe')).VersionInfo.FileVersion
+if ($v -eq '1.2.0') { 'PASS: back on 1.2.0' } else { "FAIL: installed exe is $v" }
+$y = Get-Content -LiteralPath (Join-Path $dir 'resources\app-update.yml') -Raw
+if ($y -match 'provider:\s*github') { 'PASS: app-update.yml points at GitHub' } else { "FAIL: app-update.yml:`n$y" }
+$q = Get-Content -LiteralPath "$ud\migration-queue.json" -Raw | ConvertFrom-Json
+if (@($q.files | Where-Object { $_.id -eq 'update-test-0001' }).Count -eq 0) { 'PASS: the test file is out of the queue' } else { 'FAIL: the test file is still queued' }
+```
+
+If every check in 6.1–6.11 passed, the release candidate can be tagged.
+
+### 6.12 After the real release is published (not a gate)
+
+On a machine running the published 1.2.0: tray → **Check for Updates**.
+The notification says *Quework Desktop 1.2.0 is up to date*, and:
+
+```powershell
+$hit = @(Get-Content -LiteralPath $log | Where-Object { $_ -match '\[updater\] Update for version 1\.2\.0 is not available \(latest version: 1\.2\.0' })
+if ($hit.Count -ge 1) { 'PASS: the GitHub leg works (TLS, /releases/latest, latest.yml)' } else { 'FAIL: no answer from GitHub; look for "[updater]" lines in debug.log' }
+```
+
+That is the first proof of the GitHub leg. The first real update (1.2.0 →
+1.2.1) is the second: watch `debug.log` for `[updater]` lines on the first
+machine that gets it.
