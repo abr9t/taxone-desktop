@@ -61,12 +61,20 @@ function installStubs({ isPackaged = true, keytar = false, axios = null, electro
  */
 function recordingAxios() {
     const calls = [];
+    // Set control.failWith to an Error (with .code) to make every request
+    // reject with it after being recorded — a certificate or connection failure.
+    const control = { failWith: null };
+    const respond = async () => {
+        if (control.failWith) throw control.failWith;
+        return { status: 200, data: {} };
+    };
     const instance = (cfg) => ({
         interceptors: { response: { use: () => {} } },
-        get:async (url) => { calls.push({ method: 'get', baseURL: cfg.baseURL, url }); return { status: 200, data: {} }; },
-        post: async (url) => { calls.push({ method: 'post', baseURL: cfg.baseURL, url }); return { status: 200, data: {} }; },
+        get: async (url) => { calls.push({ method: 'get', baseURL: cfg.baseURL, url }); return respond(); },
+        post: async (url) => { calls.push({ method: 'post', baseURL: cfg.baseURL, url }); return respond(); },
     });
     return {
+        control,
         calls,
         module: {
             create: (cfg) => { calls.push({ method: 'create', baseURL: cfg.baseURL }); return instance(cfg); },

@@ -160,6 +160,27 @@ async function main() {
         assert.strictEqual(rec.calls[0].baseURL, NEW);
         ok('startup with a valid host: resume, and the first request goes to that host');
     }
+    // A failed token check is not a reason to sign out: the token may be
+    // fine, and the host has already passed validation. Through the real
+    // verifyToken, so neither it nor resolveStartup can drop the token.
+    for (const [status, failure] of [
+        ['tls_error', Object.assign(new Error('unable to verify the first certificate'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' })],
+        ['network_error', Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })],
+    ]) {
+        reset({ serverUrl: NEW, keychainToken: 'tok', storeToken: 'tok' });
+        rec.control.failWith = failure;
+        try {
+            const d = await resolveStartup({ auth, uploader, log: () => {} });
+            assert.deepStrictEqual(d, { action: 'resume', serverUrl: NEW, token: 'tok', status });
+        } finally {
+            rec.control.failWith = null;
+        }
+        assert.strictEqual(stubs.store.get('serverUrl'), NEW, `${status}: host kept`);
+        assert.strictEqual(stubs.keychain.get(KEY), 'tok', `${status}: keychain token kept`);
+        assert.strictEqual(stubs.store.get('_token'), 'tok', `${status}: _token fallback kept`);
+        assert.strictEqual(await auth.getToken(), 'tok', `${status}: still signed in`);
+        ok(`startup with ${status}: resume, host and token kept in both stores`);
+    }
     {
         reset({ serverUrl: NEW });
         const d = await resolveStartup({ auth, uploader, log: () => {} });
