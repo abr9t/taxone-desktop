@@ -21,16 +21,88 @@ CommonJS throughout (no ESM — `electron-store` v8 requirement).
 | xlsx | ^0.18.5 | Excel export for queue data |
 | form-data | (transitive) | Multipart uploads via axios |
 | electron-builder | ^25.0.0 | Build & packaging (dev) |
-| cross-env | ^7.0.3 | Cross-platform env vars (dev) |
+| cross-env | ^7.0.3 | Unused since `npm run dev` moved to `scripts/dev.js`; removal tracked in `BACKLOG.md` |
 | png2icons | ^2.0.1 | Icon conversion (dev) |
 
 Node.js built-in `crypto.randomUUID()` for IDs (no `uuid` package — ESM incompatibility).
 
 ---
 
-## TLS Configuration
+## TLS
 
-`process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'` is set at the top of `src/main.js` (line 1) to disable TLS certificate verification. This allows connections to servers with self-signed or invalid certificates.
+Certificate verification is always on, in every build. Nothing in the app
+turns it off, and `test/tls-tripwire.test.js` fails the suite if anything
+under `src/` or `scripts/` does.
+
+Until v1.2.0, `src/main.js` began with `process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'`
+(added in `3afd711` so the app could reach Herd's `https://*.test` sites). That
+disabled verification for every Node HTTPS call: the bearer token and every
+uploaded client document. Anyone on the network path could impersonate
+`caputa.quework.app`. Releases are unsigned, so certificate checking is the
+only thing that vouches for the server, and later for an update.
+
+**Which stack does what.** Every API call (sign-in check, client search,
+folders, uploads, both upload paths) is axios in the main process on Node's
+`https`. Node trusts its own bundled CA list and **not** the Windows
+certificate store. The renderers make no network requests. `shell.openExternal`
+hands the browser sign-in to the user's default browser, which uses the
+Windows store.
+
+**One place builds a client.** `uploader.createApiClient(serverUrl, token)`:
+- runs the host through `validateServerUrl()` on every build and throws
+  `HostRejectedError` (`code: 'E_HOST_REJECTED'`) before anything is sent;
+- pins `httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: true })`.
+  The explicit option wins over a `NODE_TLS_REJECT_UNAUTHORIZED=0` inherited
+  from the user's environment;
+- renames certificate failures (see below).
+
+`getClient`, `configure` and `verifyTokenWith` all go through it.
+`main.js` also deletes an inherited `NODE_TLS_REJECT_UNAUTHORIZED` at startup
+and records it in `debug.log`, to cover anything that ever bypasses the
+factory. A released build that sees `NODE_EXTRA_CA_CERTS` records that too.
+
+**Development servers.** Herd installs its CA in the Windows store only, so
+the browser trusts `https://taxone.test` and the app's Node client does not.
+`npm run dev` runs `scripts/dev.js`, which launches Electron with
+`NODE_EXTRA_CA_CERTS` pointing at Herd's CA
+(`%USERPROFILE%\.config\herd\config\valet\CA\LaravelValetCASelfSigned.crt`),
+or keeps one you already set. That adds a trust anchor; chain and hostname
+checks stay on. Two constraints:
+- Node reads `NODE_EXTRA_CA_CERTS` once at process start (verified on Electron
+  33.4.11), which is why it is set by the launcher and not in `main.js`.
+- `scripts/` is outside electron-builder's `files:`, so the launcher can never
+  be packaged (`test/dev-launcher.test.js`).
+
+Plain `npm start` / `electron .` gets no extra CA: `https://*.test` then fails
+certificate verification. `http://` dev hosts are unaffected.
+
+**Certificate failures are named.** A network that re-signs TLS (corporate
+inspection, some firewalls and antivirus) pushes its CA to the Windows store,
+which Node does not read, so every request fails with a certificate error.
+The factory's response interceptor rewrites `err.message` for Node's
+certificate codes to *"Quework Desktop could not verify the security
+certificate of {host} ({code}), so nothing was sent. If your office network
+inspects encrypted traffic, ask your IT team to exempt {host}."* It keeps
+`err.code` and logs `[tls] Certificate verification failed`. As a result:
+- sign-in shows that message instead of "Invalid token";
+- startup gets `verifyToken() === 'tls_error'`, keeps the token, sets the tray
+  to its error state and shows one notification;
+- queue rows and the confirm window show the message. The wording avoids
+  "SSL" and "timeout", so `_isRetryableError()` does not retry what a retry
+  cannot fix.
+
+Routing requests through Electron's `net` (Windows store, system proxy) is
+tracked in `BACKLOG.md`.
+
+**Tests.**
+- `test/tls-verification.test.js` uses the TEST-ONLY fixtures in
+  `test/fixtures/tls/`. It checks that a packaged build refuses a dev host
+  before connecting, that an untrusted CA is rejected with no request sent,
+  and that an inherited `NODE_TLS_REJECT_UNAUTHORIZED=0` does not win (with a
+  default-agent control that proves the variable was live). It also checks
+  that `NODE_EXTRA_CA_CERTS` makes the CA trusted while a hostname mismatch is
+  still rejected, and covers the certificate-failure messages.
+- `test/tls-tripwire.test.js` checks the source for relaxations.
 
 ---
 
@@ -114,10 +186,12 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 **3. Manual token paste (fallback):**
 - Login window has expandable "Paste token manually" section (toggle animation with `max-height` transition)
-- User enters server URL + token → `uploader.verifyTokenWith()` validates (10s timeout) → save to keychain + store
+- User enters server URL + token → `uploader.verifyTokenWith()` validates (10s timeout) → save to keychain + store. It returns `{ ok, error }`; `error` carries the certificate message when the failure was a certificate, and the window shows it instead of "Invalid token"
 - On success: shows green checkmark success state, auto-closes window after 2s
 
 **Login window auto-fills server URL** — on init, calls `window.taxone.getServerUrl()` and populates the input field
+
+**Startup notice** — on init it also calls `window.taxone.getStartupNotice()` (`auth:get-startup-notice`). When startup rejected the stored host, this returns a message naming the host and saying the user was signed out, shown in the window's error area. The next successful sign-in clears it. See [Persisted host, checked on read](#persisted-host-checked-on-read)
 
 ### Auth State Propagation
 
@@ -262,8 +336,10 @@ Three-tab interface: **Import**, **Queue**, **History**.
 - Batch completion counters (`_batchCompleted`, `_batchSkipped`, `_batchFailed`) — reset on each `start()` call, reported in the completion notification (per-run, not cumulative)
 
 **Network reconnection:**
-- 30s `setInterval` in main.js checks `uploader.verifyToken()`
-- If online and failed files exist with idle queue → `retryAllFailed()`
+- 30s `setInterval` in main.js runs `retryFailedIfOnline()` (`src/reconnect.js`), which checks `uploader.verifyToken()`
+- If online (`'ok'`) and failed files exist with idle queue → `retryAllFailed()`. Any other answer — including `'host_rejected'` and `'tls_error'` — retries nothing
+- Never rejects: a throw inside the tick (a rejected host, a broken store) is logged and the tick ends
+- Registered only by `initMigrationQueue()`, which does not run after a startup that rejected the stored host
 
 **Export to Excel:**
 - "Export" button on Queue tab toolbar exports current filtered file list to `.xlsx`
@@ -334,6 +410,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 | `settings:set-auto-launch` | invoke | Set `app.setLoginItemSettings({ openAtLogin, path: process.execPath })` |
 | `settings:browse-folder` | invoke | Native folder picker dialog |
 | `get-server-url` | invoke | Return stored server URL |
+| `auth:get-startup-notice` | invoke | Return why startup opened the sign-in window (e.g. a rejected stored host), or `null`. Cleared by the next successful sign-in |
 | `auth:open-browser-sign-in` | invoke | Validate a server URL, then open `{canonicalUrl}/desktop/authorize` in the default browser. Returns `{success, error}` |
 
 ### Clients & Upload (registered in `main.js`)
@@ -489,15 +566,17 @@ stderr.
 
 ### Server URL validation
 
-`auth.validateServerUrl()` is the single gate every `serverUrl` passes before it
-is persisted, used by all three writers: the `connect` handler, the `auth`
-handler, and `auth:login`.
+`auth.validateServerUrl()` is the single gate every `serverUrl` passes. On
+write: all three writers (the `connect` handler, the `auth` handler and
+`auth:login`). On read: once at startup (`enforcePersistedServerUrl`, below)
+and every time an API client is built (`uploader.createApiClient`, see
+[TLS](#tls)).
 
 `taxone-desktop://` is a protocol anyone can put behind a link, the repo is
 public, and the stored host is where the app sends its bearer token on the next
-launch — `uploader.configure(serverUrl, token)` runs unprompted from
-`whenReady`. An unvalidated `url=` parameter is therefore a one-click token
-exfiltration primitive.
+launch: startup verifies the token against it unprompted from `whenReady`. An
+unvalidated `url=` parameter is therefore a one-click token exfiltration
+primitive.
 
 The rule is an allowlist:
 
@@ -515,6 +594,44 @@ the token to the host. The `auth` handler persists the host before the token, so
 a token arriving with a rejected host is never written. A link that would move an
 already-configured install to a different server raises a confirmation dialog
 first — a valid Quework URL is still some other firm's.
+
+### Persisted host, checked on read
+
+Validating writes is not enough on its own. An install upgraded from v1.1.5 can
+be carrying a host written before the gate existed (an unvalidated
+`taxone-desktop://connect` link was enough to set one), and it would keep
+sending its token there after the upgrade.
+
+At startup, after the legacy host and watch-folder migrations and before
+anything authenticated, `main.js` calls `resolveStartup()` (`src/startup.js`).
+That runs `auth.enforcePersistedServerUrl()`:
+
+| Stored `serverUrl` | Result |
+|--------------------|--------|
+| empty | nothing to do |
+| valid | kept; the canonical form is persisted if the stored string differed (so a `taxone.cpa` that survived the migration guard maps to `caputa.quework.app`) |
+| rejected | `serverUrl` deleted **and** `clearToken()` called, which clears the keychain entry and the electron-store `_token` fallback (the token may already have been sent to that host); logged via `debugLog` |
+
+On a rejected host, `resolveStartup()` returns `{ action: 'login', notice }` and
+`main.js` opens only the sign-in window, which shows the notice. Until a sign-in
+stores a valid host again:
+- `uploader.configure` is not called, so there is no API client;
+- `initMigrationQueue` is not called, so there is no `MigrationQueue`, no
+  `autoResume` and no 30s reconnect loop;
+- the watcher is not started.
+
+The IPC handlers registered at load (search, folders, upload) still answer, but
+`getClient()` finds no host or token and sends nothing.
+
+If the check itself throws (a locked or corrupt settings file), startup fails
+closed: sign-in window, token cleared, nothing sent.
+
+Tests:
+- `test/enforce-persisted-host.test.js` covers the table above, the token
+  stores, and `resolveStartup`.
+- `test/startup-gating.test.js` loads the real `main.js` against a fake
+  Electron and checks that nothing above starts or sends after a rejected
+  host, with a valid-host launch as the control.
 
 ---
 
@@ -542,7 +659,7 @@ Used by `auth.js` and `watcher.js`.
 | `_hostMigratedV1` | boolean | `undefined` | Guard flag: legacy-host migration has run once |
 | `_watchPathMigratedV1` | boolean | `undefined` | Guard flag: legacy watch folder migration has run once |
 
-**Legacy-host migration** — `auth.migrateLegacyHost()` runs once at startup (`main.js`, `app.whenReady`, before `serverUrl` is read), wrapped in its own try/catch so a store failure costs the migration and not the tray. electron-store lives in `userData` and survives installer updates — but only because `userData` is pinned; see [The userData pin](#the-userdata-pin), without which this migration finds an empty store and silently does nothing. This step rewrites an exact-hostname match on `taxone.cpa` / `www.taxone.cpa` to `https://caputa.quework.app`, then sets `_hostMigratedV1` so it never runs again. Deliberately single-firm and exact-match — it must be retired before multi-tenant subdomains land, not generalized.
+**Legacy-host migration** — `auth.migrateLegacyHost()` runs once at startup (`main.js`, `app.whenReady`, before `serverUrl` is read), wrapped in its own try/catch so a store failure costs the migration and not the tray. electron-store lives in `userData` and survives installer updates — but only because `userData` is pinned; see [The userData pin](#the-userdata-pin), without which this migration finds an empty store and silently does nothing. This step rewrites an exact-hostname match on `taxone.cpa` / `www.taxone.cpa` to `https://caputa.quework.app`, then sets `_hostMigratedV1` so it never runs again. Deliberately single-firm and exact-match — it must be retired before multi-tenant subdomains land, not generalized. The stored host is then validated on read — see [Persisted host, checked on read](#persisted-host-checked-on-read).
 
 **Legacy watch folder migration** — `watcher.migrateLegacyWatchPath()` runs once at startup, immediately after the host migration and before `createTray()`. `watchPath` is never written on first run, so an install whose owner never opened Settings has no stored value for the `userData` pin to preserve — renaming the default from `~/TaxoneWatch` to `~/QueworkWatch` would silently move it. When `watchPath` is unset **and** `~/TaxoneWatch` exists on disk, the legacy path is persisted; a fresh install has no such folder and keeps `~/QueworkWatch`. Sets `_watchPathMigratedV1`.
 
@@ -641,7 +758,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | Script | Command |
 |--------|---------|
 | `start` | `electron .` |
-| `dev` | `cross-env NODE_ENV=development electron .` |
+| `dev` | `node scripts/dev.js` — launches Electron with `NODE_ENV=development` and Herd's CA in `NODE_EXTRA_CA_CERTS`; see [TLS](#tls) |
 | `test` | `node test/run-all.js` |
 | `build` | `electron-builder --win` |
 | `build:dir` | `electron-builder --win --dir` |
@@ -666,7 +783,8 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | `webUtils.getPathForFile()` | Electron's API for getting absolute paths from drag-and-drop files |
 | Browser OAuth as primary login | Avoids users having to find and copy API tokens manually |
 | `taxone-desktop://connect` protocol | Allows web app to deep-link into desktop app for onboarding |
-| Offline-tolerant startup | `network_error` on token verify doesn't force re-login — cached credentials used |
+| Offline-tolerant startup | `network_error` or `tls_error` on token verify doesn't force re-login — cached credentials used; `tls_error` also shows a notification and the tray error state |
+| Stored host validated at startup | Rejected host and both token copies cleared before anything authenticated; nothing starts until a valid sign-in |
 | Two separate file upload mechanisms | Watch folder for day-to-day (per-file), File Upload tool for bulk imports |
 | 200-row virtualization in Queue tab | Prevents DOM thrashing with 30k+ files |
 | Import rows persisted to store | Survives window close/reopen during long import sessions |
@@ -674,7 +792,9 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | Concurrency: 1 with 500ms throttle | Prevents server overload during bulk uploads |
 | Auto-start queue on enqueue | Eliminates extra manual step — `enqueue()` calls `start()` automatically |
 | Batch counters reset per start | Completion notification shows per-run results, not cumulative totals |
-| `NODE_TLS_REJECT_UNAUTHORIZED = '0'` | Allows connections to servers with self-signed certificates |
+| Certificate verification never relaxed | The token and client documents ride on it, and unsigned builds have nothing else vouching for the server |
+| One client factory (`createApiClient`) | Host validation and `rejectUnauthorized: true` in one place no caller can skip |
+| Dev CA via `NODE_EXTRA_CA_CERTS`, not `rejectUnauthorized: false` | Adds a trust anchor in dev without turning any check off; the launcher lives outside the packaged files |
 | Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `taxone-desktop://` is a protocol anyone can link to |
 | Auth-changed event propagation | Single source of truth for auth state across all windows |
 
@@ -693,12 +813,14 @@ taxone-desktop/
 │   ├── icon.svg                  # App icon source
 │   └── tray-icon.png             # System tray icon
 ├── src/
-│   ├── main.js                   # App entry — userData pin, lifecycle, tray, windows, IPC handlers, queue init, protocol handler, TLS config
-│   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL allowlist, legacy-host migration, userData tripwire
+│   ├── main.js                   # App entry — inherited-TLS-override guard, userData pin, lifecycle, tray, windows, IPC handlers, queue init, protocol handler
+│   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL allowlist, legacy-host migration, persisted-host check, userData tripwire
+│   ├── startup.js                # resolveStartup — login-or-resume decision, stored host checked before the first request
+│   ├── reconnect.js              # One never-rejecting tick of the 30s reconnect loop
 │   ├── auto-launch.js            # Run-key reconciliation after the executable rename
 │   ├── debug-log.js              # Shared {userData}debug.log writer (debugLog / debugError)
 │   ├── watcher.js                # chokidar watch folder, file parsing, move-to-Uploaded/Cancelled
-│   ├── uploader.js               # Axios API client — search, folders, upload, token verification
+│   ├── uploader.js               # createApiClient (host validation, pinned TLS verification, certificate-error naming) — search, folders, upload, token verification
 │   ├── migration.js              # MigrationQueue class — persistent queue engine, client matching, scanning, throttling
 │   ├── migration-ipc.js          # IPC handler registration for file upload tool, Excel export
 │   ├── preload.js                # contextBridge for login/settings/confirm windows (window.taxone)
@@ -708,13 +830,23 @@ taxone-desktop/
 │       ├── settings.html         # Watch folder config, connection status, auto-launch toggle, sign in/out
 │       ├── confirm-upload.html   # Per-file upload: rename, client search, folder browser, cancel
 │       └── migration.html        # File upload tool: import/queue/history tabs, auth guards, Excel export, drop overlay
+├── scripts/
+│   └── dev.js                    # `npm run dev` launcher — adds Herd's CA via NODE_EXTRA_CA_CERTS; never packaged
 ├── test/
 │   ├── run-all.js                # Runs every *.test.js, one process each (the suites stub Module._load)
 │   ├── auto-launch.test.js       # Run-key reconciliation, including the Task-Manager-disabled case
+│   ├── dev-launcher.test.js      # Dev CA resolution; scripts/ stays outside the packaged files
+│   ├── enforce-persisted-host.test.js # Stored host checked on read; both token stores cleared; resolveStartup
 │   ├── migrate-legacy-host.test.js   # taxone.cpa -> caputa.quework.app, guard, idempotence
 │   ├── migrate-watch-path.test.js    # ~/TaxoneWatch pinning vs. fresh installs
+│   ├── reconnect.test.js         # The 30s tick never rejects and never retries for a rejected host
+│   ├── startup-gating.test.js    # Real main.js on a fake Electron: a rejected host starts nothing
+│   ├── tls-tripwire.test.js      # No source under src/ or scripts/ relaxes certificate verification
+│   ├── tls-verification.test.js  # Local HTTPS server: rejection, env override, dev CA, hostname check, error naming
 │   ├── userdata-tripwire.test.js     # Tripwire throws unpackaged, records packaged
-│   └── validate-server-url.test.js   # Server URL allowlist and its counterfactuals
+│   ├── validate-server-url.test.js   # Server URL allowlist and its counterfactuals
+│   ├── helpers/                  # Module._load stubs and the TLS child-process client (not suites)
+│   └── fixtures/tls/             # TEST-ONLY CA and leaf certificates (100-year validity) — see its README
 ├── electron-builder.yml          # Build config — NSIS, protocol registration, icons, artifactName
 ├── package.json                  # Dependencies & scripts
 ├── UPGRADE-TEST.md               # Manual upgrade checklist — the merge gate for v1.2.0
