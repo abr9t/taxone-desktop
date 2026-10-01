@@ -241,7 +241,21 @@ app.whenReady().then(async () => {
     // (see enforcePersistedServerUrl in auth.js). On 'login' nothing below
     // runs — no client, no watcher, no upload queue, no reconnect loop —
     // until a sign-in stores a valid host again.
-    const decision = await resolveStartup({ auth, uploader });
+    // resolveStartup handles a failed host check itself, but anything after
+    // it — getToken()'s store read, say — can still throw. Uncaught, that
+    // rejects whenReady and leaves the user with a tray and no window. Stop
+    // instead: log, send nothing, remove nothing, open the sign-in window.
+    let decision;
+    try {
+        decision = await resolveStartup({ auth, uploader });
+    } catch (err) {
+        debugLog(`[startup] Startup check failed; not resuming, nothing removed: ${err.message}`);
+        decision = {
+            action: 'login',
+            notice: `Quework Desktop could not start normally (${err.message}), so it has not connected. `
+                + 'Nothing was removed. Restart the app to try again, or sign in below.',
+        };
+    }
     if (decision.action === 'login') {
         startupNotice = decision.notice || null;
         showLogin();

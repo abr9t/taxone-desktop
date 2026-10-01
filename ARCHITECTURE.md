@@ -645,7 +645,10 @@ and `host_rejected` open the sign-in window.
 and the token. If the check itself throws (a settings file locked for a moment,
 or corrupt), startup **stops**: nothing is sent, nothing is removed, and the
 sign-in window says the settings could not be read and nothing was removed. The
-next launch reads the file again. In the other direction, a rejected host whose
+next launch reads the file again. A throw later in the startup decision (for
+example `getToken()`'s store read) is caught around the `resolveStartup()` call
+in `whenReady` and handled the same way, with the error in the notice. It never
+leaves the app with a tray and no window. In the other direction, a rejected host whose
 removal partly fails (one delete throws) is still a rejection: every removal is
 attempted, the failure is logged as "Removal incomplete", and the user sees the
 rejection notice.

@@ -170,6 +170,40 @@ async function main() {
         ok(`stored ${bad}: Settings > Save starts the watcher, but upload and search still send nothing`);
     }
 
+    // ─── A throw after the host check ──────────────────────────────
+    {
+        // getToken()'s read of the revocation flag throws. That is past
+        // resolveStartup's own catch, so only the whenReady wrapper stands
+        // between it and a startup with no window.
+        // The stub store asks has() before get(), so the read is made to
+        // throw at has() — as electron-store's own get() would.
+        const realHas = stubs.store.has;
+        let flagReads = 0;
+        stubs.store.has = function (key) {
+            if (key === '_keychainTokenRevoked') {
+                flagReads++;
+                throw new Error('EIO: settings file unreadable');
+            }
+            return realHas.call(this, key);
+        };
+        try {
+            await launch({ serverUrl: NEW, token: 'tok' });
+        } finally {
+            stubs.store.has = realHas;
+        }
+        assert.ok(flagReads >= 1, 'precondition: the flag read really threw');
+        assert.deepStrictEqual(seen.windows.map(w => w.file), ['login.html'], 'the sign-in window opens');
+        const notice = await handlers['auth:get-startup-notice']();
+        assert.ok(notice && notice.includes('EIO') && notice.includes('Nothing was removed'), `the notice carries the error: ${notice}`);
+        assert.ok(stubs.logs.some(l => l.includes('[startup] Startup check failed') && l.includes('EIO')), 'logged');
+        assert.deepStrictEqual(rec.calls, [], 'nothing sent');
+        assert.strictEqual(seen.queues + seen.watchStarts + seen.intervals.length, 0, 'nothing started');
+        assert.strictEqual(stubs.store.get('serverUrl'), NEW, 'host kept');
+        assert.strictEqual(stubs.store.get('_token'), 'tok', '_token kept');
+        assert.strictEqual(stubs.keychain.get('TaxOneDesktop/api-token'), 'tok', 'keychain token kept');
+        ok("getToken's flag read throws: sign-in window with the error, nothing cleared, nothing sent");
+    }
+
     // ─── A keychain that will not let go of the token ──────────────
     {
         const keytar = require('keytar');
