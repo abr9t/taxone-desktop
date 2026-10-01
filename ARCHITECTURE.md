@@ -650,13 +650,27 @@ removal partly fails (one delete throws) is still a rejection: every removal is
 attempted, the failure is logged as "Removal incomplete", and the user sees the
 rejection notice.
 
-**A keychain that will not let go.** If `keytar.deletePassword` throws,
-`clearToken()` logs it and sets `_keychainTokenRevoked`. While that flag is set,
-`getToken()` ignores the keychain and reads only the `_token` fallback, which
-`clearToken()` has deleted. A later `taxone-desktop://connect` link therefore
-finds the user signed out. `saveToken()` removes the flag only once a new token
-is in the keychain; if that write fails too, the new token is read from the
-fallback, never the revoked one.
+**A keychain that will not let go.** `clearToken()` works in this order:
+1. Delete the `_token` fallback first: it is the plain-text copy, and the one
+   the app can always reach. This happens before the keychain is touched, so a
+   hung Credential Manager cannot leave it behind. A try/finally means the
+   keychain is still attempted if this delete throws.
+2. Delete the keychain entry.
+3. If that throws, log it and revoke the entry: in memory for this run, and as
+   `_keychainTokenRevoked` in the store. The store write has its own try/catch
+   and log.
+
+While the entry is revoked, `getToken()` ignores the keychain and reads only
+the `_token` fallback, which step 1 deleted. A later `taxone-desktop://connect`
+link therefore finds the user signed out. `saveToken()` lifts the revocation
+only once a new token is in the keychain; if that write fails too, the new token
+is read from the fallback, never the revoked one.
+
+Residual: if the keychain delete **and** the flag write both fail, the
+revocation holds only until the app restarts. After that the old keychain entry
+is readable again. The log records it ("Could not persist the keychain
+revocation"). The host was removed in the same pass, so nothing is sent until a
+sign-in stores a valid host.
 
 **Firms outside `*.quework.app`.** The allowlist accepts only a single-label
 `https://<firm>.quework.app` host (plus the `taxone.cpa` mapping). A firm on any

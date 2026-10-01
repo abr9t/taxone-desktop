@@ -128,6 +128,50 @@ async function main() {
         assert.strictEqual(stubs.keychain.get(KEY), 'old', 'precondition: the old token is still in the keychain');
         assert.strictEqual(await auth.getToken(), 'fresh', 'the new token, from the fallback — never the revoked one');
         ok('a failed keychain write keeps the revocation: the fallback token is used, not the revoked one');
+        await auth.saveToken('lift'); // the keychain works again: lift this run's revocation for the cases below
+    }
+    {
+        // The keychain delete fails AND the store refuses the flag write.
+        // _token is deleted first, so it is gone; the revocation holds in
+        // memory, so getToken() still returns nothing; clearToken() resolves.
+        reset({ serverUrl: NEW, keychainToken: 'kc', storeToken: 'st' });
+        const keytar = require('keytar');
+        const origDelete = keytar.deletePassword;
+        keytar.deletePassword = async () => { throw new Error('keychain locked'); };
+        const realSet = stubs.store.set;
+        stubs.store.set = function (key, val) {
+            if (key === '_keychainTokenRevoked') throw new Error('EPERM: settings file locked');
+            return realSet.call(this, key, val);
+        };
+        try {
+            await auth.clearToken();
+        } finally {
+            keytar.deletePassword = origDelete;
+            stubs.store.set = realSet;
+        }
+        assert.strictEqual(stubs.keychain.get(KEY), 'kc', 'precondition: the keychain delete really failed');
+        assert.strictEqual(stubs.store.has('_keychainTokenRevoked'), false, 'precondition: the flag write really failed');
+        assert.strictEqual(stubs.store.has('_token'), false, '_token is gone');
+        assert.strictEqual(await auth.getToken(), null, 'getToken() returns nothing');
+        assert.ok(stubs.logs.some(l => l.includes('Could not persist the keychain revocation')), 'the flag failure is logged');
+        ok('keychain delete and flag write both fail: _token gone, getToken() returns nothing, both logged');
+        await auth.saveToken('lift');
+    }
+    {
+        // Order, observed in time: with a keychain call that never returns (a
+        // hung Credential Manager), the plain-text _token must already be gone.
+        reset({ keychainToken: 'kc', storeToken: 'st' });
+        const keytar = require('keytar');
+        const origDelete = keytar.deletePassword;
+        keytar.deletePassword = () => new Promise(() => {});
+        try {
+            auth.clearToken(); // deliberately not awaited: it never settles
+            await new Promise(r => setImmediate(r));
+            assert.strictEqual(stubs.store.has('_token'), false, '_token deleted before the keychain is touched');
+        } finally {
+            keytar.deletePassword = origDelete;
+        }
+        ok('a hung keychain delete: _token is already gone (deleted first)');
     }
 
     // ─── Accepted hosts ────────────────────────────────────────────

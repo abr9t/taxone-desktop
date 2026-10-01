@@ -63,8 +63,17 @@ try {
 // in the keychain, so the revoked one can never be read back.
 const KEYCHAIN_REVOKED = '_keychainTokenRevoked';
 
+// The same revocation, for this run, in memory — so it holds even when the
+// store refuses the flag write. Without it, a failed keychain delete plus a
+// failed flag write would leave getToken() reading the revoked token back.
+let keychainRevokedThisRun = false;
+
+function keychainRevoked() {
+    return keychainRevokedThisRun || !!store.get(KEYCHAIN_REVOKED);
+}
+
 async function getToken() {
-    if (keytar && !store.get(KEYCHAIN_REVOKED)) {
+    if (keytar && !keychainRevoked()) {
         try {
             return await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
         } catch {
@@ -80,6 +89,7 @@ async function saveToken(token) {
     if (keytar) {
         try {
             await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, token);
+            keychainRevokedThisRun = false;
             store.delete(KEYCHAIN_REVOKED);
         } catch {
             // keytar failed — token is still in electron-store, and a
@@ -89,15 +99,32 @@ async function saveToken(token) {
 }
 
 async function clearToken() {
-    if (keytar) {
-        try {
-            await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
-        } catch (err) {
-            store.set(KEYCHAIN_REVOKED, true);
-            debugLog(`[auth] Could not delete the keychain token (${err.message}); marked it revoked so it is never read again`);
+    // The _token fallback first: it is the plain-text copy, and the one this
+    // app can always reach. try/finally so the keychain delete is still
+    // attempted if it throws.
+    try {
+        store.delete('_token');
+    } finally {
+        if (keytar) {
+            try {
+                await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
+            } catch (err) {
+                revokeKeychainToken(err);
+            }
         }
     }
-    store.delete('_token');
+}
+
+function revokeKeychainToken(err) {
+    keychainRevokedThisRun = true;
+    debugLog(`[auth] Could not delete the keychain token (${err.message}); marked it revoked so it is never read again`);
+    try {
+        store.set(KEYCHAIN_REVOKED, true);
+    } catch (flagErr) {
+        // Still revoked for this run (above). After a restart the keychain
+        // entry would be readable again — logged so that is on record.
+        debugLog(`[auth] Could not persist the keychain revocation (${flagErr.message}); it holds for this run only`);
+    }
 }
 
 function getServerUrl() {
