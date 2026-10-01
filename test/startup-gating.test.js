@@ -155,6 +155,19 @@ async function main() {
         assert.strictEqual(handlers['migration:start'], undefined, 'no queue IPC registered');
         assert.deepStrictEqual(rec.calls, [], 'still nothing sent');
         ok(`stored ${bad}: search, folders and upload IPC answer without a request`);
+
+        // Settings > Save is not gated on a valid host: it does start the
+        // watcher. What keeps that harmless is the API side — a watched file
+        // can only reach upload:file, which refuses without a request.
+        const saved = await handlers['settings:save']({}, { watchPath: 'C:/fake/QueworkWatch', moveAfterUpload: true });
+        assert.deepStrictEqual(saved, { success: true });
+        assert.strictEqual(seen.watchStarts, 1, 'Settings > Save starts the watcher even signed out');
+        const again = await handlers['upload:file']({}, { filePath: __filename, clientId: 1, folderPath: '', filename: 'x.pdf' });
+        assert.strictEqual(again.success, false);
+        assert.ok(/Not authenticated/.test(again.error), `refused as not authenticated: ${again.error}`);
+        assert.ok((await handlers['clients:search']({}, 'smith')).error);
+        assert.deepStrictEqual(rec.calls, [], 'a running watcher still sends nothing');
+        ok(`stored ${bad}: Settings > Save starts the watcher, but upload and search still send nothing`);
     }
 
     // ─── A keychain that will not let go of the token ──────────────
