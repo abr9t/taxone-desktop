@@ -102,7 +102,17 @@ tracked in `BACKLOG.md`.
   default-agent control that proves the variable was live). It also checks
   that `NODE_EXTRA_CA_CERTS` makes the CA trusted while a hostname mismatch is
   still rejected, and covers the certificate-failure messages.
-- `test/tls-tripwire.test.js` checks the source for relaxations.
+- `test/tls-tripwire.test.js` checks for relaxations in `src/` and `scripts/`
+  (`.js`, `.mjs`, `.cjs`, HTML `<script>` bodies), `package.json` and
+  `electron-builder.yml`. It flags:
+  - any assignment of `NODE_TLS_REJECT_UNAUTHORIZED`, including as a quoted
+    key or a shell prefix in a string;
+  - `rejectUnauthorized` other than a literal `true` followed by `,`, `}` or end
+    of line;
+  - `checkServerIdentity`, `setCertificateVerifyProc`, a `'certificate-error'`
+    handler and the `ignore-certificate-errors` switch.
+
+  It cannot catch runtime-built names or `eval`; its header lists the limits.
 
 ---
 
@@ -609,7 +619,7 @@ That runs `auth.enforcePersistedServerUrl()`:
 | Stored `serverUrl` | Result |
 |--------------------|--------|
 | empty | nothing to do |
-| valid | kept; the canonical form is persisted if the stored string differed (so a `taxone.cpa` that survived the migration guard maps to `caputa.quework.app`) |
+| valid | kept; the canonical form is persisted if the stored string differed (so a `taxone.cpa` that survived the migration guard maps to `caputa.quework.app`). That write has its own try/catch: if it fails it is logged and startup continues with the canonical URL. A valid host never leads to `clearToken()` |
 | rejected | `serverUrl` deleted **and** `clearToken()` called, which clears the keychain entry and the electron-store `_token` fallback (the token may already have been sent to that host); logged via `debugLog` |
 
 On a rejected host, `resolveStartup()` returns `{ action: 'login', notice }` and
@@ -618,20 +628,48 @@ stores a valid host again:
 - `uploader.configure` is not called, so there is no API client;
 - `initMigrationQueue` is not called, so there is no `MigrationQueue`, no
   `autoResume` and no 30s reconnect loop;
-- the watcher is not started.
+- the watcher is not started **at launch**. It can still be started from
+  Settings > Save, because `startWatching()` is not gated on a valid host
+  (tracked in `BACKLOG.md`). That sends nothing: a watched file can only reach
+  `upload:file`, and with no host or token stored, upload and search refuse
+  with `E_NOT_AUTHENTICATED` ("Not authenticated. Please sign in.").
 
 The IPC handlers registered at load (search, folders, upload) still answer, but
 `getClient()` finds no host or token and sends nothing.
 
+A failed token check is not a rejection. `tls_error` and `network_error` resume
+with the host and both copies of the token kept; only `auth_error` (401/403)
+and `host_rejected` open the sign-in window.
+
 If the check itself throws (a locked or corrupt settings file), startup fails
 closed: sign-in window, token cleared, nothing sent.
+
+**A keychain that will not let go.** If `keytar.deletePassword` throws,
+`clearToken()` logs it and sets `_keychainTokenRevoked`. While that flag is set,
+`getToken()` ignores the keychain and reads only the `_token` fallback, which
+`clearToken()` has deleted. A later `taxone-desktop://connect` link therefore
+finds the user signed out. `saveToken()` removes the flag only once a new token
+is in the keychain; if that write fails too, the new token is read from the
+fallback, never the revoked one.
+
+**Firms outside `*.quework.app`.** The allowlist accepts only a single-label
+`https://<firm>.quework.app` host (plus the `taxone.cpa` mapping). A firm on any
+other host — a custom domain, a nested subdomain, a port — is treated as
+rejected on upgrade: signed out, with its host and token removed. It **cannot
+sign in again** until a release widens the allowlist, because every sign-in path
+goes through the same `validateServerUrl()`. Today that is one firm
+(`caputa.quework.app`), so nobody is affected. Widening the allowlist or
+supporting custom domains is tracked in `BACKLOG.md`, and has to land before a
+firm on another host is onboarded.
 
 Tests:
 - `test/enforce-persisted-host.test.js` covers the table above, the token
   stores, and `resolveStartup`.
 - `test/startup-gating.test.js` loads the real `main.js` against a fake
   Electron and checks that nothing above starts or sends after a rejected
-  host, with a valid-host launch as the control.
+  host, with a valid-host launch as the control. It also covers Settings > Save
+  starting the watcher while upload and search still send nothing, and a
+  connect link after a failed keychain delete.
 
 ---
 
@@ -656,6 +694,7 @@ Used by `auth.js` and `watcher.js`.
 | `watchPath` | string | `~/QueworkWatch/` | Watch folder path. Not written on first run — `getWatchPath()` falls back to the default instead of persisting it |
 | `moveAfterUpload` | boolean | `true` | Move files to Uploaded/ subfolder |
 | `_token` | string | `null` | API token (fallback when keytar unavailable) |
+| `_keychainTokenRevoked` | boolean | `undefined` | Set when `clearToken()` could not delete the keychain entry: `getToken()` then ignores the keychain. Removed by a `saveToken()` whose keychain write succeeds |
 | `_hostMigratedV1` | boolean | `undefined` | Guard flag: legacy-host migration has run once |
 | `_watchPathMigratedV1` | boolean | `undefined` | Guard flag: legacy watch folder migration has run once |
 
@@ -795,7 +834,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | Certificate verification never relaxed | The token and client documents ride on it, and unsigned builds have nothing else vouching for the server |
 | One client factory (`createApiClient`) | Host validation and `rejectUnauthorized: true` in one place no caller can skip |
 | Dev CA via `NODE_EXTRA_CA_CERTS`, not `rejectUnauthorized: false` | Adds a trust anchor in dev without turning any check off; the launcher lives outside the packaged files |
-| Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `taxone-desktop://` is a protocol anyone can link to |
+| Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `taxone-desktop://` is a protocol anyone can link to. A firm on any other host is signed out on upgrade and cannot sign in until the allowlist is widened (see [Persisted host, checked on read](#persisted-host-checked-on-read)) |
 | Auth-changed event propagation | Single source of truth for auth state across all windows |
 
 ---
@@ -841,7 +880,7 @@ taxone-desktop/
 │   ├── migrate-watch-path.test.js    # ~/TaxoneWatch pinning vs. fresh installs
 │   ├── reconnect.test.js         # The 30s tick never rejects and never retries for a rejected host
 │   ├── startup-gating.test.js    # Real main.js on a fake Electron: a rejected host starts nothing
-│   ├── tls-tripwire.test.js      # No source under src/ or scripts/ relaxes certificate verification
+│   ├── tls-tripwire.test.js      # Nothing in src/, scripts/, package.json or electron-builder.yml relaxes certificate verification
 │   ├── tls-verification.test.js  # Local HTTPS server: rejection, env override, dev CA, hostname check, error naming
 │   ├── userdata-tripwire.test.js     # Tripwire throws unpackaged, records packaged
 │   ├── validate-server-url.test.js   # Server URL allowlist and its counterfactuals
