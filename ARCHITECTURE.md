@@ -825,10 +825,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 
 ### GitHub Actions Release
 
-`.github/workflows/release.yml` — triggered on `v*` tags:
-1. Runs on `windows-latest`
-2. Node.js 20, `npm ci`, `npm run build`
-3. `softprops/action-gh-release@v2` uploads `dist/*.exe` to GitHub Releases
+`.github/workflows/release.yml` — see [Release pipeline](#release-pipeline).
 
 ### Scripts
 
@@ -837,9 +834,31 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | `start` | `electron .` |
 | `dev` | `node scripts/dev.js` — launches Electron with `NODE_ENV=development` and Herd's CA in `NODE_EXTRA_CA_CERTS`; see [TLS](#tls) |
 | `test` | `node test/run-all.js` |
-| `build` | `electron-builder --win` |
-| `build:dir` | `electron-builder --win --dir` |
-| `build:win` | `electron-builder --win` |
+| `build` | `electron-builder --win --publish never` |
+| `build:dir` | `electron-builder --win --dir --publish never` |
+| `build:win` | `electron-builder --win --publish never` |
+
+Every local build passes `--publish never`; only CI publishes (see [Release pipeline](#release-pipeline)).
+
+---
+
+## Releases and auto-update
+
+### Release pipeline
+
+`.github/workflows/release.yml` has two jobs, and a run starts only one of them.
+
+| Job | Trigger | Permissions | What it does |
+|-----|---------|-------------|--------------|
+| `publish` | a pushed `v*` tag | `contents: write` | `npm ci`, `npm test`, then `electron-builder --win --publish always`: builds and uploads `TaxOne-Desktop-Setup.exe`, `TaxOne-Desktop-Setup.exe.blockmap` and `latest.yml` to a **draft** release |
+| `dry-run` | Run workflow (`workflow_dispatch`), any branch | `contents: read` | `npm ci`, `npm test`, `npm run build` (`--publish never`), and uploads the same three files as a workflow artifact kept 7 days. Creates no release |
+
+- **electron-builder is the only uploader.** It writes `latest.yml`, so the sha512 in it and the installer beside it come from one build. Releases up to v1.1.5 were built by electron-builder (which, with no `publish:` block, found the repo from `.git/config` and uploaded to its own draft) and then `softprops/action-gh-release`, which found that draft, uploaded the exe again and published it. v1.1.2 shows both: `TaxOne-Desktop-Setup-1.1.2.exe` from electron-builder and `TaxOne.Desktop.Setup.1.1.2.exe` from softprops, in one release. The second uploader is gone, and the `publish:` block in `electron-builder.yml` names the repo explicitly.
+- **A draft reaches nobody.** electron-updater (via `github.com/abr9t/taxone-desktop/releases/latest`) and the web download link (`releases/latest/download/TaxOne-Desktop-Setup.exe`) only see published releases. Publishing the draft by hand is the moment every installed app starts downloading it.
+- **Release candidates come from the dry run.** Run the workflow on the branch, download the artifact, and test that installer (UPGRADE-TEST.md) before tagging. The tag build is a fresh build of the same commit, not the same bytes; its `latest.yml` matches its own installer.
+- **Least privilege.** Top-level `permissions: {}`; only the `publish` job can write, and only its publish step is given the token. Actions are pinned by commit SHA. `actions/checkout` runs with `persist-credentials: false`, so nothing that runs during `npm ci` finds a token in `.git/config`.
+- **A local build never publishes.** Every `npm run build*` script passes `--publish never` (electron-builder otherwise publishes on its own when it sees a CI tag, and always from an npm script named `release`).
+- `test/release-config.test.js` checks all of the above, and that each check can fail.
 
 ---
 
@@ -883,7 +902,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 taxone-desktop/
 ├── .github/
 │   └── workflows/
-│       └── release.yml           # GitHub Actions: build on tag push, publish to GitHub Releases
+│       └── release.yml           # GitHub Actions: tag → draft release; Run workflow → 7-day release-candidate artifact
 ├── assets/
 │   ├── icon.ico                  # Windows installer icon (NSIS)
 │   ├── icon.png                  # App window icon (256x256)
@@ -917,6 +936,7 @@ taxone-desktop/
 │   ├── migrate-legacy-host.test.js   # taxone.cpa -> caputa.quework.app, guard, idempotence
 │   ├── migrate-watch-path.test.js    # ~/TaxoneWatch pinning vs. fresh installs
 │   ├── reconnect.test.js         # The 30s tick never rejects and never retries for a rejected host
+│   ├── release-config.test.js    # Publish config, --publish never locally, release.yml permissions/pins/dry run
 │   ├── startup-gating.test.js    # Real main.js on a fake Electron: a rejected host starts nothing
 │   ├── tls-tripwire.test.js      # Nothing in src/, scripts/, package.json or electron-builder.yml relaxes certificate verification
 │   ├── tls-verification.test.js  # Local HTTPS server: rejection, env override, dev CA, hostname check, error naming
@@ -924,7 +944,8 @@ taxone-desktop/
 │   ├── validate-server-url.test.js   # Server URL allowlist and its counterfactuals
 │   ├── helpers/                  # Module._load stubs and the TLS child-process client (not suites)
 │   └── fixtures/tls/             # TEST-ONLY CA and leaf certificates (100-year validity) — see its README
-├── electron-builder.yml          # Build config — NSIS, protocol registration, icons, artifactName
+├── .gitleaksignore               # Fingerprints of the TEST-ONLY fixture keys
+├── electron-builder.yml          # Build config — NSIS, protocol registration, icons, artifactName, publish (GitHub draft)
 ├── package.json                  # Dependencies & scripts
 ├── UPGRADE-TEST.md               # Manual upgrade checklist — the merge gate for v1.2.0
 └── ARCHITECTURE.md               # This file

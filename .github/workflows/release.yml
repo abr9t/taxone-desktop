@@ -1,32 +1,87 @@
 name: Build and Release
 
+# Two jobs, never both in one run:
+#
+#   publish  — a pushed v* tag. Builds and uploads the installer, its
+#              .blockmap and latest.yml to a DRAFT GitHub release. Nothing
+#              reaches an installed app until a person publishes the draft:
+#              electron-updater and the web download link only see published
+#              releases.
+#   dry-run  — started by hand (Actions > Build and Release > Run workflow,
+#              on any branch). Same build, --publish never; the three files
+#              come back as a 7-day workflow artifact. This is the release
+#              candidate UPGRADE-TEST.md tests before anything is tagged.
+#
+# electron-builder is the only uploader: it writes latest.yml, so the sha512
+# in it and the installer beside it come from the same build. See
+# ARCHITECTURE.md, "Releases and auto-update".
+#
+# Actions are pinned by commit SHA (the tag in the comment is what the SHA was
+# when pinned). checkout does not persist its token into .git/config, so
+# nothing that runs during npm ci can read it from there.
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
-permissions:
-  contents: write
+# No job gets more than it asks for below.
+permissions: {}
 
 jobs:
-  build:
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
       - run: npm ci
 
-      - run: npm run build
+      - run: npm test
+
+      - name: Build and upload to a draft release
+        if: github.ref_type == 'tag'
+        run: npx --no-install electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Release
-        uses: softprops/action-gh-release@v2
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          files: dist/*.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npm test
+
+      # npm run build is --publish never (package.json), and this job has no
+      # token to publish with anyway.
+      - run: npm run build
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: |
+            dist/TaxOne-Desktop-Setup.exe
+            dist/TaxOne-Desktop-Setup.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 7
