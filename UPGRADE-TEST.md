@@ -234,13 +234,36 @@ Expected: `baseline written`, with both counts `0`. Then run the installer.
 
 ### Config survived — the whole point of the release
 
-- [ ] After upgrading, check `%APPDATA%\Quework Desktop`.
-      - **PASS:** it doesn't exist, or it contains only Electron-internal
-        folders (e.g. `Crashpad`) and none of: `taxone-settings.json`,
-        `migration-queue.json`, `debug.log`.
-      - **FAIL:** any of those three files exists. The pin was bypassed. If
-        `debug.log` exists, a `[auth] userData resolved to` line in it
-        confirms this. **Stop the test and report.**
+- [ ] After upgrading, check `%APPDATA%\Quework Desktop`. A missing folder is
+      only evidence if the upgraded app actually ran, because an app that never
+      launched writes nothing anywhere. So PASS also requires a new
+      `[migration]` line in the pinned folder's `debug.log` since the step 2
+      baseline:
+
+```powershell
+$wrong = "$env:APPDATA\Quework Desktop"
+$bf    = "$env:TEMP\quework-upgrade-log-baseline.json"
+$log   = "$env:APPDATA\TaxOne Desktop\debug.log"
+$leaks = @('taxone-settings.json', 'migration-queue.json', 'debug.log') | Where-Object { Test-Path -LiteralPath (Join-Path $wrong $_) }
+if (-not (Test-Path -LiteralPath $bf)) {
+    'FAIL: no baseline file. Run the step 2 block before the installer.'
+} else {
+    $before   = (Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json).migration
+    $launched = @(if (Test-Path -LiteralPath $log) { Select-String -LiteralPath $log -Pattern '[migration] Re-pointed persisted host' -SimpleMatch }).Count - $before
+    if ($leaks) {
+        "FAIL: $($leaks -join ', ') in $wrong. The pin was bypassed. Stop the test and report."
+    } elseif ($launched -lt 1) {
+        'FAIL: no new [migration] line, so there is no evidence the upgraded app launched; a missing folder proves nothing'
+    } else {
+        "PASS: none of the three files in $wrong, and the upgraded app launched ($launched new [migration] line)"
+    }
+}
+```
+
+      **FAIL** on leaked files means the pin was bypassed. If `debug.log`
+      exists in `$wrong`, a `[auth] userData resolved to` line in it confirms
+      this. **Stop the test and report.** Electron-internal folders there
+      (e.g. `Crashpad`) are expected and not checked.
 - [ ] The settings file shows `serverUrl` = `https://caputa.quework.app` and
       `_hostMigratedV1` = true:
 
@@ -427,30 +450,46 @@ if ($cmd -notmatch '^"?(.+?\.exe)"?') {
 
 ```powershell
 $sa = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -ErrorAction SilentlyContinue).'com.taxone.desktop'
-$bf = "$env:TEMP\quework-startupapproved-before.txt"
+$bf = "$env:TEMP\quework-startupapproved-before.json"
+Remove-Item -LiteralPath $bf -Force -ErrorAction SilentlyContinue
 if (-not $sa) {
     'STOP: no StartupApproved value; disable the entry in Task Manager first'
 } elseif ($sa[0] -ne 3) {
     "STOP: byte is $($sa[0]), not 3 (disabled); disable the entry in Task Manager first"
 } else {
-    Set-Content -LiteralPath $bf -Value $sa[0]
-    "before: $($sa[0]) (disabled), recorded to $bf"
+    $record = [ordered]@{ byte = [int]$sa[0]; recorded = (Get-Date).ToString('o') }
+    $record | ConvertTo-Json | Set-Content -LiteralPath $bf
+    "before: $($record.byte) (disabled) at $($record.recorded), recorded to $bf"
 }
 ```
 
-      Quit the app from the tray, launch it again, then record the byte after:
+      Quit the app from the tray, launch it again, then record the byte after.
+      The check requires the running app to have started **after** the
+      "before" record, so it cannot pass without a relaunch:
 
 ```powershell
 $sa = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -ErrorAction SilentlyContinue).'com.taxone.desktop'
-$bf = "$env:TEMP\quework-startupapproved-before.txt"
+$bf = "$env:TEMP\quework-startupapproved-before.json"
+$procs = @(Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue)
 if (-not (Test-Path -LiteralPath $bf)) {
     'FAIL: no "before" record. Run the previous block first.'
+} elseif (-not $procs) {
+    'FAIL: Quework Desktop is not running. Launch it, then run this again.'
 } elseif (-not $sa) {
     'FAIL: the StartupApproved value is gone'
 } else {
-    $before = [int](Get-Content -LiteralPath $bf -Raw).Trim()
-    "before: $before  after: $($sa[0])"
-    if ($before -eq 3 -and $sa[0] -eq 3) { 'PASS: still disabled' } else { 'FAIL: the relaunch changed the enabled state' }
+    $before  = Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json
+    $at      = [datetime]::Parse($before.recorded)
+    $started = ($procs | Sort-Object StartTime | Select-Object -First 1).StartTime
+    "before: $($before.byte) at $at"
+    "after:  $($sa[0]); app started $started"
+    if ($started -le $at) {
+        'FAIL: the app has not been relaunched since the "before" record'
+    } elseif ($before.byte -eq 3 -and $sa[0] -eq 3) {
+        'PASS: relaunched and still disabled'
+    } else {
+        'FAIL: the relaunch changed the enabled state'
+    }
 }
 ```
 
@@ -497,17 +536,20 @@ $s = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
 $s.serverUrl = 'https://evil.example'
 [System.IO.File]::WriteAllText($f, ($s | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
 $s = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
+$kb = "$env:TEMP\quework-keychain-before.txt"
+$keychain = @(cmdkey /list | Select-String 'TaxOneDesktop')
+Set-Content -LiteralPath $kb -Value $keychain.Count
 "serverUrl:         $($s.serverUrl)"
 "_token present:    $([bool]$s._token)"
-"keychain entries:"
-cmdkey /list | Select-String 'TaxOneDesktop'
+"keychain entries:  $($keychain.Count) (recorded to $kb)"
+$keychain | ForEach-Object { "  $($_.Line.Trim())" }
 ```
 
       Expected: `serverUrl` is `https://evil.example`, `_token present` is
-      `True`, and a `TaxOneDesktop/api-token` keychain entry is listed (keytar
-      writes the token there as well as to `_token`). `cmdkey` prints target
-      names only, never the secret. If no keychain entry is listed, the
-      keychain half of the check below proves nothing: say so in the report.
+      `True`, and one `TaxOneDesktop/api-token` keychain entry (keytar writes
+      the token there as well as to `_token`). `cmdkey` prints target names
+      only, never the secret. The count is recorded so the check after launch
+      compares against it.
 3. Launch Quework Desktop from the Start Menu.
 4. Check:
 
@@ -517,24 +559,46 @@ cmdkey /list | Select-String 'TaxOneDesktop'
 - [ ] The host and **both** copies of the token are gone:
 
 ```powershell
-$f = "$env:APPDATA\TaxOne Desktop\taxone-settings.json"
+$f   = "$env:APPDATA\TaxOne Desktop\taxone-settings.json"
+$kb  = "$env:TEMP\quework-keychain-before.txt"
+$log = "$env:APPDATA\TaxOne Desktop\debug.log"
 $s = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
 $hasHost  = [bool]$s.serverUrl
 $hasToken = [bool]$s._token
-$keychain = @(cmdkey /list | Select-String 'TaxOneDesktop')
+$after    = @(cmdkey /list | Select-String 'TaxOneDesktop').Count
 "serverUrl present: $hasHost"
 "_token present:    $hasToken"
-"keychain entries:  $($keychain.Count)"
-if (-not $hasHost -and -not $hasToken -and $keychain.Count -eq 0) { 'PASS' } else { 'FAIL' }
+if (-not (Test-Path -LiteralPath $kb)) {
+    'FAIL: no keychain count recorded before launch. Run the block in step 4.2 first.'
+} else {
+    $before = [int](Get-Content -LiteralPath $kb -Raw).Trim()
+    "keychain entries:  before $before, after $after"
+    $deleteFailed = (Test-Path -LiteralPath $log) -and (Select-String -LiteralPath $log -Pattern '[auth] Could not delete the keychain token' -SimpleMatch -Quiet)
+    if ($hasHost -or $hasToken) {
+        'FAIL: the host or the _token fallback survived'
+    } elseif ($before -lt 1) {
+        'INCONCLUSIVE: there was no keychain entry before launch, so the keychain half proves nothing. Host and _token are gone.'
+    } elseif ($after -eq 0) {
+        'PASS: host, _token and the keychain entry are gone'
+    } elseif ($deleteFailed) {
+        'FAIL: the keychain delete failed (logged). The token is revoked, not removed. Report it.'
+    } else {
+        'FAIL: the keychain entry survived and no delete failure was logged'
+    }
+}
 ```
 
-- [ ] `debug.log` names what happened:
+- [ ] `debug.log` names what happened: exactly one rejection line, naming
+      `evil.example`.
 
 ```powershell
-Select-String -LiteralPath "$env:APPDATA\TaxOne Desktop\debug.log" -Pattern '[startup] Stored server URL rejected' -SimpleMatch | ForEach-Object { $_.Line }
+$log = "$env:APPDATA\TaxOne Desktop\debug.log"
+$lines = @(if (Test-Path -LiteralPath $log) {
+    Select-String -LiteralPath $log -Pattern '[startup] Stored server URL rejected' -SimpleMatch | Where-Object { $_.Line -match 'evil\.example' }
+})
+$lines | ForEach-Object { $_.Line }
+if ($lines.Count -eq 1) { 'PASS' } else { "FAIL: $($lines.Count) rejection line(s) naming evil.example, expected exactly 1" }
 ```
-
-      Expected: one line naming `https://evil.example`.
 - [ ] Sign in again with `https://caputa.quework.app`. The error area clears
       and the app works as before.
 
