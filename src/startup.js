@@ -21,18 +21,16 @@ async function resolveStartup({ auth, uploader, log = debugLog }) {
     try {
         host = await auth.enforcePersistedServerUrl();
     } catch (err) {
-        // A store we cannot read or write is not a host we have checked.
-        // Fail closed: nothing is sent, and the token goes if it can.
-        log(`[startup] Could not check the stored server URL, signing out to be safe: ${err.message}`);
-        try {
-            await auth.clearToken();
-        } catch {
-            // Already failing closed; the login window is the next step either way.
-        }
+        // STOP, not DELETE. A store we cannot read is not a host we have
+        // checked, so nothing is sent — but it is not a host we have rejected
+        // either, and only a validateServerUrl() rejection may remove
+        // anything. A settings file that is locked for a moment (antivirus, a
+        // backup) must not sign the user out; the next launch reads it again.
+        log(`[startup] Could not check the stored server URL; not resuming, nothing removed: ${err.message}`);
         return {
             action: 'login',
-            notice: 'Quework Desktop could not read its saved server settings and has signed you out. '
-                + "Sign in again with your firm's Quework URL.",
+            notice: 'Quework Desktop could not read its saved settings, so it has not connected. '
+                + 'Nothing was removed. Restart the app to try again, or sign in below.',
         };
     }
 

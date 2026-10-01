@@ -229,20 +229,62 @@ async function main() {
         ok('a token but no host: login, nothing sent');
     }
     {
-        // A store that throws is not a host we have checked: fail closed.
-        reset({ serverUrl: 'https://evil.example', storeToken: 'st' });
-        const logged = [];
-        const brokenAuth = {
-            ...auth,
-            enforcePersistedServerUrl: async () => { throw new Error('EPERM: settings file locked'); },
+        // A rejected host whose removal partly fails is still a rejection:
+        // the user gets the rejection notice, and the token still goes.
+        reset({ serverUrl: 'https://evil.example', keychainToken: 'kc', storeToken: 'st' });
+        const realDelete = stubs.store.delete;
+        stubs.store.delete = function (key) {
+            if (key === 'serverUrl') throw new Error('EPERM: settings file locked');
+            return realDelete.call(this, key);
         };
-        const d = await resolveStartup({ auth: brokenAuth, uploader, log: m => logged.push(m) });
+        let d;
+        try {
+            d = await resolveStartup({ auth, uploader, log: () => {} });
+        } finally {
+            stubs.store.delete = realDelete;
+        }
         assert.strictEqual(d.action, 'login');
-        assert.ok(d.notice, 'the user is told');
-        assert.ok(logged[0].includes('EPERM'), 'and it is logged');
-        assert.strictEqual(stubs.store.has('_token'), false, 'the token is cleared anyway');
+        assert.ok(d.notice.includes('was not accepted'), `the rejection notice, not "nothing was removed": ${d.notice}`);
+        assert.strictEqual(stubs.keychain.has(KEY), false, 'keychain token still cleared');
+        assert.strictEqual(stubs.store.has('_token'), false, '_token still cleared');
+        assert.ok(stubs.logs.some(l => l.includes('Removal incomplete') && l.includes('EPERM')), 'the partial failure is logged');
         assert.deepStrictEqual(rec.calls, []);
-        ok('enforcement throws: fail closed — login, token cleared, nothing sent');
+        ok('rejected host, host delete throws: still the rejection notice, token still cleared, logged');
+    }
+    {
+        // STOP, not DELETE. A store read that throws once is not a host we
+        // have rejected: nothing is sent and nothing is removed, and once the
+        // read works again startup carries on as if nothing happened.
+        reset({ serverUrl: NEW, keychainToken: 'tok', storeToken: 'tok' });
+        const realGet = stubs.store.get;
+        let thrown = 0;
+        stubs.store.get = function (key) {
+            if (key === 'serverUrl' && thrown === 0) {
+                thrown++;
+                throw new Error('EBUSY: settings file locked');
+            }
+            return realGet.call(this, key);
+        };
+        const logged = [];
+        let d;
+        try {
+            d = await resolveStartup({ auth, uploader, log: m => logged.push(m) });
+        } finally {
+            stubs.store.get = realGet;
+        }
+        assert.strictEqual(thrown, 1, 'precondition: the read threw once');
+        assert.strictEqual(d.action, 'login', 'not resumed');
+        assert.ok(d.notice.includes('Nothing was removed'), `the notice says nothing was removed: ${d.notice}`);
+        assert.ok(logged.some(m => m.includes('EBUSY')), 'logged');
+        assert.deepStrictEqual(rec.calls, [], 'nothing sent');
+        assert.strictEqual(stubs.store.get('serverUrl'), NEW, 'host kept');
+        assert.strictEqual(stubs.keychain.get(KEY), 'tok', 'keychain token kept');
+        assert.strictEqual(stubs.store.get('_token'), 'tok', '_token kept');
+        ok('store read throws once: sign-in window, nothing sent, host and both tokens kept');
+
+        const again = await resolveStartup({ auth, uploader, log: () => {} });
+        assert.deepStrictEqual(again, { action: 'resume', serverUrl: NEW, token: 'tok', status: 'ok' });
+        ok('…and the next read succeeds: startup resumes with everything intact');
     }
     // Last: resuming leaves uploader's cached client behind, which the
     // "nothing sent after a rejected startup" case above must not inherit.

@@ -641,8 +641,14 @@ A failed token check is not a rejection. `tls_error` and `network_error` resume
 with the host and both copies of the token kept; only `auth_error` (401/403)
 and `host_rejected` open the sign-in window.
 
-If the check itself throws (a locked or corrupt settings file), startup fails
-closed: sign-in window, token cleared, nothing sent.
+**Stop is not delete.** Only a `validateServerUrl()` rejection removes the host
+and the token. If the check itself throws (a settings file locked for a moment,
+or corrupt), startup **stops**: nothing is sent, nothing is removed, and the
+sign-in window says the settings could not be read and nothing was removed. The
+next launch reads the file again. In the other direction, a rejected host whose
+removal partly fails (one delete throws) is still a rejection: every removal is
+attempted, the failure is logged as "Removal incomplete", and the user sees the
+rejection notice.
 
 **A keychain that will not let go.** If `keytar.deletePassword` throws,
 `clearToken()` logs it and sets `_keychainTokenRevoked`. While that flag is set,

@@ -273,9 +273,9 @@ async function enforcePersistedServerUrl() {
         if (result.url !== stored) {
             // Its own try: persisting the canonical form is tidying, not
             // validation. A store that refuses the write must not turn a
-            // valid host into a failed check — resolveStartup() fails closed
-            // on a throw and would clear the token. Carry on with result.url;
-            // the next launch tries the write again.
+            // valid host into a failed check — resolveStartup() would stop
+            // and open the sign-in window. Carry on with result.url; the next
+            // launch tries the write again.
             try {
                 store.set('serverUrl', result.url);
                 debugLog(`[startup] Stored server URL canonicalised: ${stored} -> ${result.url}`);
@@ -286,9 +286,23 @@ async function enforcePersistedServerUrl() {
         return { ok: true, url: result.url };
     }
 
-    store.delete('serverUrl');
-    await clearToken();
-    debugLog(`[startup] Stored server URL rejected; cleared it and the token: ${stored} (${result.error})`);
+    // A rejection: the one case that removes anything. Each removal is
+    // attempted even if another fails, and a failure is logged rather than
+    // thrown — a throw would reach resolveStartup()'s "nothing was removed"
+    // path and tell the user something untrue about a rejected host.
+    const failures = [];
+    try {
+        store.delete('serverUrl');
+    } catch (err) {
+        failures.push(`host: ${err.message}`);
+    }
+    try {
+        await clearToken();
+    } catch (err) {
+        failures.push(`token: ${err.message}`);
+    }
+    debugLog(`[startup] Stored server URL rejected; cleared it and the token: ${stored} (${result.error})`
+        + (failures.length ? `. Removal incomplete — ${failures.join('; ')}` : ''));
     return { ok: false, rejected: String(stored), error: result.error };
 }
 
