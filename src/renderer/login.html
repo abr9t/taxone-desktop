@@ -238,6 +238,11 @@
             if (serverUrl) {
                 document.getElementById('serverUrl').value = serverUrl;
             }
+            // Set when startup rejected the stored server and signed out.
+            const notice = await window.taxone.getStartupNotice();
+            if (notice) {
+                showError(notice);
+            }
         }
         init();
 

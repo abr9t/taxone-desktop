@@ -9,7 +9,7 @@
  */
 const Module = require('module');
 
-function installStubs({ isPackaged = true, keytar = false, axios = null } = {}) {
+function installStubs({ isPackaged = true, keytar = false, axios = null, electron: electronOverride = null, modules = {} } = {}) {
     const store = new Map();
     class MockStore {
         get(key, def) { return store.has(key) ? store.get(key) : def; }
@@ -26,7 +26,7 @@ function installStubs({ isPackaged = true, keytar = false, axios = null } = {}) 
     };
 
     const logs = [];
-    const electron = {
+    const electron = electronOverride || {
         app: {
             isPackaged,
             getPath: () => 'C:/Users/test/AppData/Roaming/TaxOne Desktop',
@@ -35,6 +35,7 @@ function installStubs({ isPackaged = true, keytar = false, axios = null } = {}) 
 
     const origLoad = Module._load;
     Module._load = function (request, ...rest) {
+        if (Object.prototype.hasOwnProperty.call(modules, request)) return modules[request];
         if (request === 'electron-store') return MockStore;
         if (request === 'keytar') {
             if (keytar) return keytarStub;

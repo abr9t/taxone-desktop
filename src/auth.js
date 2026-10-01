@@ -1,6 +1,6 @@
 const path = require('path');
 const Store = require('electron-store');
-const { debugError } = require('./debug-log');
+const { debugError, debugLog } = require('./debug-log');
 
 const store = new Store({ name: 'taxone-settings' });
 
@@ -236,8 +236,44 @@ function saveServerUrl(url) {
     return result.url;
 }
 
+// ─── Persisted host, checked on read ──────────────────────────────
+//
+// validateServerUrl() guards every write, but an install upgraded from v1.1.5
+// can be carrying a host written before that gate existed — an unvalidated
+// taxone-desktop://connect link was enough — and startup sends the bearer
+// token there unprompted. main.js runs this once, after migrateLegacyHost()
+// and before anything authenticated.
+//
+// A rejected host is cleared together with the token, from the keychain and
+// the electron-store fallback both: it may already have been sent to that
+// host, so it is no longer a secret worth keeping.
+
+/**
+ * @returns {Promise<{ok: true, url: string} | {ok: false, rejected: string, error: string}>}
+ *          url is '' when nothing is stored, otherwise the canonical form,
+ *          which is persisted if the stored string differed.
+ */
+async function enforcePersistedServerUrl() {
+    const stored = store.get('serverUrl', '');
+    if (stored === '' || stored === null || stored === undefined) return { ok: true, url: '' };
+
+    const result = validateServerUrl(stored);
+    if (result.ok) {
+        if (result.url !== stored) {
+            store.set('serverUrl', result.url);
+            debugLog(`[startup] Stored server URL canonicalised: ${stored} -> ${result.url}`);
+        }
+        return { ok: true, url: result.url };
+    }
+
+    store.delete('serverUrl');
+    await clearToken();
+    debugLog(`[startup] Stored server URL rejected; cleared it and the token: ${stored} (${result.error})`);
+    return { ok: false, rejected: String(stored), error: result.error };
+}
+
 module.exports = {
     getToken, saveToken, clearToken,
     getServerUrl, saveServerUrl, validateServerUrl,
-    migrateLegacyHost,
+    migrateLegacyHost, enforcePersistedServerUrl,
 };

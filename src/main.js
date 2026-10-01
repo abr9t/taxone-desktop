@@ -37,6 +37,7 @@ const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-i
 const { debugLog } = require('./debug-log');
 const { reconcileAutoLaunch, AUTO_LAUNCH_ENTRY_NAME } = require('./auto-launch');
 const { retryFailedIfOnline } = require('./reconnect');
+const { resolveStartup } = require('./startup');
 const Store = require('electron-store');
 const appStore = new Store();
 
@@ -57,6 +58,11 @@ let settingsWindow = null;
 let confirmWindow = null;
 let migrationWindow = null;
 let migrationQueue = null;
+
+// Why the sign-in window was opened at startup, when there is something to
+// say — e.g. a stored host was rejected and cleared. Shown by login.html;
+// cleared by the next successful sign-in.
+let startupNotice = null;
 
 // Queue of files pending confirmation — managed here, not in renderer
 const pendingFiles = [];
@@ -158,6 +164,7 @@ async function handleAuthUrl(url) {
 
         await auth.saveToken(token);
         uploader.configure(serverUrl, token);
+        startupNotice = null;
 
         if (loginWindow && !loginWindow.isDestroyed()) {
             loginWindow.close();
@@ -229,40 +236,42 @@ app.whenReady().then(async () => {
     // actually watches ~/TaxoneWatch.
     createTray();
 
-    const token = await auth.getToken();
-    const serverUrl = auth.getServerUrl();
-    if (!token) {
+    // After the host migration, before anything authenticated: the stored
+    // host is validated here, and a rejected one is cleared with the token
+    // (see enforcePersistedServerUrl in auth.js). On 'login' nothing below
+    // runs — no client, no watcher, no upload queue, no reconnect loop —
+    // until a sign-in stores a valid host again.
+    const decision = await resolveStartup({ auth, uploader });
+    if (decision.action === 'login') {
+        startupNotice = decision.notice || null;
         showLogin();
-    } else {
-        const result = await uploader.verifyToken();
-        if (result === 'auth_error' || result === 'host_rejected') {
-            showLogin();
-        } else {
-            // 'ok' or 'network_error' — proceed with cached credentials.
-            // configure() validates the host again and throws rather than
-            // build a client for a bad one; that must not take whenReady down.
-            try {
-                uploader.configure(serverUrl, token);
-            } catch (err) {
-                debugLog(`[startup] Not resuming, server URL rejected: ${err.message}`);
-                showLogin();
-                return;
-            }
-            startWatching();
-            initMigrationQueue();
-            showMigrationTool();
+        return;
+    }
 
-            // The token may be fine, so this is not a reason to sign out —
-            // but nothing will upload, and the user should hear why now
-            // rather than from a column of failed files.
-            if (result === 'tls_error') {
-                updateTrayMenu('error');
-                new Notification({
-                    title: 'Quework Desktop',
-                    body: uploader.describeCertificateError(new URL(serverUrl).host),
-                }).show();
-            }
-        }
+    const { serverUrl, token, status } = decision;
+    // 'ok', 'network_error' or 'tls_error' — proceed with cached credentials.
+    // configure() validates the host again and throws rather than build a
+    // client for a bad one; that must not take whenReady down.
+    try {
+        uploader.configure(serverUrl, token);
+    } catch (err) {
+        debugLog(`[startup] Not resuming, server URL rejected: ${err.message}`);
+        showLogin();
+        return;
+    }
+    startWatching();
+    initMigrationQueue();
+    showMigrationTool();
+
+    // The token may be fine, so this is not a reason to sign out — but
+    // nothing will upload, and the user should hear why now rather than from
+    // a column of failed files.
+    if (status === 'tls_error') {
+        updateTrayMenu('error');
+        new Notification({
+            title: 'Quework Desktop',
+            body: uploader.describeCertificateError(new URL(serverUrl).host),
+        }).show();
     }
 });
 
@@ -573,6 +582,7 @@ ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
         await auth.saveToken(token);
         auth.saveServerUrl(canonicalUrl);
         uploader.configure(canonicalUrl, token);
+        startupNotice = null;
 
         startWatching();
         initMigrationQueue();
@@ -718,6 +728,9 @@ ipcMain.handle('queue:state', async () => {
 ipcMain.handle('get-server-url', async () => {
     return auth.getServerUrl();
 });
+
+// Why the sign-in window opened at startup, if there is a reason to show.
+ipcMain.handle('auth:get-startup-notice', async () => startupNotice);
 
 // Browser sign-in handoff. This used to be a general "open any URL the
 // renderer asks for" channel; it has only ever had one caller, so narrow it
