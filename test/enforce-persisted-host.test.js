@@ -244,6 +244,37 @@ async function main() {
         assert.deepStrictEqual(rec.calls, []);
         ok('enforcement throws: fail closed — login, token cleared, nothing sent');
     }
+    // Last: resuming leaves uploader's cached client behind, which the
+    // "nothing sent after a rejected startup" case above must not inherit.
+    {
+        // Persisting the canonical form fails: a valid host must still pass,
+        // keep its token, and let startup continue on the canonical URL.
+        const RAW = 'https://Caputa.Quework.app/';
+        reset({ serverUrl: RAW, keychainToken: 'tok', storeToken: 'tok' });
+        const realSet = stubs.store.set;
+        stubs.store.set = function (key, val) {
+            if (key === 'serverUrl') throw new Error('EPERM: settings file locked');
+            return realSet.call(this, key, val);
+        };
+        let r;
+        let d;
+        try {
+            // Startup first, as main.js runs it: without the try/catch the
+            // throw reaches resolveStartup's fail-closed path and the token goes.
+            d = await resolveStartup({ auth, uploader, log: () => {} });
+            r = await auth.enforcePersistedServerUrl().catch(err => ({ threw: err.message }));
+        } finally {
+            stubs.store.set = realSet;
+        }
+        assert.deepStrictEqual(d, { action: 'resume', serverUrl: NEW, token: 'tok', status: 'ok' });
+        assert.deepStrictEqual(r, { ok: true, url: NEW });
+        assert.strictEqual(stubs.store.get('serverUrl'), RAW, 'host kept (as stored — the write failed)');
+        assert.strictEqual(stubs.keychain.get(KEY), 'tok', 'keychain token kept');
+        assert.strictEqual(stubs.store.get('_token'), 'tok', '_token fallback kept');
+        assert.ok(stubs.logs.some(l => l.includes('Could not persist the canonical server URL')), 'logged');
+        assert.strictEqual(rec.calls.find(c => c.baseURL).baseURL, NEW, 'startup talks to the canonical URL');
+        ok('canonical-form write throws: host and token survive, startup continues on the canonical URL');
+    }
 }
 
 main().then(() => {

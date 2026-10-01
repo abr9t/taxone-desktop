@@ -271,8 +271,17 @@ async function enforcePersistedServerUrl() {
     const result = validateServerUrl(stored);
     if (result.ok) {
         if (result.url !== stored) {
-            store.set('serverUrl', result.url);
-            debugLog(`[startup] Stored server URL canonicalised: ${stored} -> ${result.url}`);
+            // Its own try: persisting the canonical form is tidying, not
+            // validation. A store that refuses the write must not turn a
+            // valid host into a failed check — resolveStartup() fails closed
+            // on a throw and would clear the token. Carry on with result.url;
+            // the next launch tries the write again.
+            try {
+                store.set('serverUrl', result.url);
+                debugLog(`[startup] Stored server URL canonicalised: ${stored} -> ${result.url}`);
+            } catch (err) {
+                debugLog(`[startup] Could not persist the canonical server URL (${err.message}); using ${result.url} for this launch`);
+            }
         }
         return { ok: true, url: result.url };
     }
