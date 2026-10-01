@@ -1,4 +1,11 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// Certificate verification is never relaxed in this app (ARCHITECTURE.md,
+// "TLS"). A value inherited from the user's environment would turn it off for
+// every Node HTTPS call, so drop it before anything can connect. The API
+// client pins rejectUnauthorized: true, which wins regardless; this covers
+// anything that does not go through it. Logged further down, once the
+// userData pin has run and debug.log has somewhere to go.
+const inheritedTlsOverride = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, Notification } = require('electron');
 const path = require('path');
@@ -29,8 +36,19 @@ const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
 const { debugLog } = require('./debug-log');
 const { reconcileAutoLaunch, AUTO_LAUNCH_ENTRY_NAME } = require('./auto-launch');
+const { retryFailedIfOnline } = require('./reconnect');
 const Store = require('electron-store');
 const appStore = new Store();
+
+if (inheritedTlsOverride !== undefined) {
+    debugLog(`[tls] Ignored NODE_TLS_REJECT_UNAUTHORIZED (value "${inheritedTlsOverride}") inherited from the environment; certificate verification stays on`);
+}
+// Not a relaxation — it only adds trust anchors, and whoever can set it can
+// as easily add a root to the user's Windows store — but a released build has
+// no reason to see it, so leave a record.
+if (app.isPackaged && process.env.NODE_EXTRA_CA_CERTS) {
+    debugLog(`[tls] NODE_EXTRA_CA_CERTS is set in a released build: ${process.env.NODE_EXTRA_CA_CERTS}`);
+}
 
 let tray = null;
 let trayMenu = null;
@@ -217,11 +235,19 @@ app.whenReady().then(async () => {
         showLogin();
     } else {
         const result = await uploader.verifyToken();
-        if (result === 'auth_error') {
+        if (result === 'auth_error' || result === 'host_rejected') {
             showLogin();
         } else {
-            // 'ok' or 'network_error' — proceed with cached credentials
-            uploader.configure(serverUrl, token);
+            // 'ok' or 'network_error' — proceed with cached credentials.
+            // configure() validates the host again and throws rather than
+            // build a client for a bad one; that must not take whenReady down.
+            try {
+                uploader.configure(serverUrl, token);
+            } catch (err) {
+                debugLog(`[startup] Not resuming, server URL rejected: ${err.message}`);
+                showLogin();
+                return;
+            }
             startWatching();
             initMigrationQueue();
             showMigrationTool();
@@ -473,21 +499,9 @@ function initMigrationQueue() {
     registerMigrationIPC(migrationQueue, () => migrationWindow, uploader);
     migrationQueue.autoResume();
 
-    // Network reconnection: auto-retry failed files when connection is restored
-    setInterval(async () => {
-        if (!migrationQueue) return;
-        const stats = migrationQueue.getStats();
-        if (stats.failed > 0 && stats.queueStatus === 'idle') {
-            try {
-                const isOnline = await uploader.verifyToken();
-                if (isOnline === 'ok') {
-                    migrationQueue.retryAllFailed();
-                }
-            } catch {
-                // still offline, do nothing
-            }
-        }
-    }, 30000);
+    // Network reconnection: auto-retry failed files when connection is restored.
+    // retryFailedIfOnline never rejects — see src/reconnect.js.
+    setInterval(() => retryFailedIfOnline(migrationQueue, uploader), 30000);
 }
 
 function dequeueFile() {
