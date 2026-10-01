@@ -450,16 +450,20 @@ if ($cmd -notmatch '^"?(.+?\.exe)"?') {
 
 ```powershell
 $sa = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -ErrorAction SilentlyContinue).'com.taxone.desktop'
-$bf = "$env:TEMP\quework-startupapproved-before.json"
+$bf = "$env:TEMP\quework-startupapproved-before.txt"
 Remove-Item -LiteralPath $bf -Force -ErrorAction SilentlyContinue
 if (-not $sa) {
     'STOP: no StartupApproved value; disable the entry in Task Manager first'
 } elseif ($sa[0] -ne 3) {
     "STOP: byte is $($sa[0]), not 3 (disabled); disable the entry in Task Manager first"
 } else {
-    $record = [ordered]@{ byte = [int]$sa[0]; recorded = (Get-Date).ToString('o') }
-    $record | ConvertTo-Json | Set-Content -LiteralPath $bf
-    "before: $($record.byte) (disabled) at $($record.recorded), recorded to $bf"
+    # Plain text, not JSON: pwsh 7's ConvertFrom-Json turns an ISO string into
+    # a DateTime, which then round-trips through the current culture and loses
+    # its sub-second part. 'o' with the invariant culture keeps full precision
+    # and the UTC offset.
+    $at = (Get-Date).ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+    Set-Content -LiteralPath $bf -Value @([int]$sa[0], $at)
+    "before: $($sa[0]) (disabled) at $at, recorded to $bf"
 }
 ```
 
@@ -469,7 +473,7 @@ if (-not $sa) {
 
 ```powershell
 $sa = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -ErrorAction SilentlyContinue).'com.taxone.desktop'
-$bf = "$env:TEMP\quework-startupapproved-before.json"
+$bf = "$env:TEMP\quework-startupapproved-before.txt"
 $procs = @(Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue)
 if (-not (Test-Path -LiteralPath $bf)) {
     'FAIL: no "before" record. Run the previous block first.'
@@ -478,14 +482,15 @@ if (-not (Test-Path -LiteralPath $bf)) {
 } elseif (-not $sa) {
     'FAIL: the StartupApproved value is gone'
 } else {
-    $before  = Get-Content -LiteralPath $bf -Raw | ConvertFrom-Json
-    $at      = [datetime]::Parse($before.recorded)
+    $rec     = @(Get-Content -LiteralPath $bf)
+    $byte    = [int]$rec[0]
+    $at      = [datetime]::ParseExact($rec[1], 'o', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
     $started = ($procs | Sort-Object StartTime | Select-Object -First 1).StartTime
-    "before: $($before.byte) at $at"
-    "after:  $($sa[0]); app started $started"
-    if ($started -le $at) {
+    "before: $byte at $($at.ToString('o'))"
+    "after:  $($sa[0]); app started $($started.ToString('o'))"
+    if ($started.ToUniversalTime() -le $at.ToUniversalTime()) {
         'FAIL: the app has not been relaunched since the "before" record'
-    } elseif ($before.byte -eq 3 -and $sa[0] -eq 3) {
+    } elseif ($byte -eq 3 -and $sa[0] -eq 3) {
         'PASS: relaunched and still disabled'
     } else {
         'FAIL: the relaunch changed the enabled state'
@@ -562,15 +567,25 @@ $keychain | ForEach-Object { "  $($_.Line.Trim())" }
 $f   = "$env:APPDATA\TaxOne Desktop\taxone-settings.json"
 $kb  = "$env:TEMP\quework-keychain-before.txt"
 $log = "$env:APPDATA\TaxOne Desktop\debug.log"
-$s = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
-$hasHost  = [bool]$s.serverUrl
-$hasToken = [bool]$s._token
-$after    = @(cmdkey /list | Select-String 'TaxOneDesktop').Count
-"serverUrl present: $hasHost"
-"_token present:    $hasToken"
-if (-not (Test-Path -LiteralPath $kb)) {
+$s = $null
+if (Test-Path -LiteralPath $f) {
+    try { $s = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -ErrorAction Stop } catch { $s = $null }
+}
+$after = @(cmdkey /list | Select-String 'TaxOneDesktop').Count
+if (-not (Test-Path -LiteralPath $f)) {
+    # The app clears two keys, it does not delete the file. A missing file means
+    # something else happened (electron-store discards a file it cannot parse),
+    # so "no host, no token" would be true for the wrong reason.
+    'FAIL: taxone-settings.json is missing, so its absence of a host and token proves nothing'
+} elseif ($null -eq $s) {
+    'FAIL: taxone-settings.json could not be read or parsed'
+} elseif (-not (Test-Path -LiteralPath $kb)) {
     'FAIL: no keychain count recorded before launch. Run the block in step 4.2 first.'
 } else {
+    $hasHost  = [bool]$s.serverUrl
+    $hasToken = [bool]$s._token
+    "serverUrl present: $hasHost"
+    "_token present:    $hasToken"
     $before = [int](Get-Content -LiteralPath $kb -Raw).Trim()
     "keychain entries:  before $before, after $after"
     $deleteFailed = (Test-Path -LiteralPath $log) -and (Select-String -LiteralPath $log -Pattern '[auth] Could not delete the keychain token' -SimpleMatch -Quiet)
