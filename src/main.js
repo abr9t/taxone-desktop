@@ -1,4 +1,11 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// Certificate verification is never relaxed in this app (ARCHITECTURE.md,
+// "TLS"). A value inherited from the user's environment would turn it off for
+// every Node HTTPS call, so drop it before anything can connect. The API
+// client pins rejectUnauthorized: true, which wins regardless; this covers
+// anything that does not go through it. Logged further down, once the
+// userData pin has run and debug.log has somewhere to go.
+const inheritedTlsOverride = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, shell, Notification } = require('electron');
 const path = require('path');
@@ -29,8 +36,20 @@ const { MigrationQueue } = require('./migration');
 const { registerMigrationIPC, createMigrationUploadFn } = require('./migration-ipc');
 const { debugLog } = require('./debug-log');
 const { reconcileAutoLaunch, AUTO_LAUNCH_ENTRY_NAME } = require('./auto-launch');
+const { retryFailedIfOnline } = require('./reconnect');
+const { resolveStartup } = require('./startup');
 const Store = require('electron-store');
 const appStore = new Store();
+
+if (inheritedTlsOverride !== undefined) {
+    debugLog(`[tls] Ignored NODE_TLS_REJECT_UNAUTHORIZED (value "${inheritedTlsOverride}") inherited from the environment; certificate verification stays on`);
+}
+// Not a relaxation — it only adds trust anchors, and whoever can set it can
+// as easily add a root to the user's Windows store — but a released build has
+// no reason to see it, so leave a record.
+if (app.isPackaged && process.env.NODE_EXTRA_CA_CERTS) {
+    debugLog(`[tls] NODE_EXTRA_CA_CERTS is set in a released build: ${process.env.NODE_EXTRA_CA_CERTS}`);
+}
 
 let tray = null;
 let trayMenu = null;
@@ -39,6 +58,11 @@ let settingsWindow = null;
 let confirmWindow = null;
 let migrationWindow = null;
 let migrationQueue = null;
+
+// Why the sign-in window was opened at startup, when there is something to
+// say — e.g. a stored host was rejected and cleared. Shown by login.html;
+// cleared by the next successful sign-in.
+let startupNotice = null;
 
 // Queue of files pending confirmation — managed here, not in renderer
 const pendingFiles = [];
@@ -140,6 +164,7 @@ async function handleAuthUrl(url) {
 
         await auth.saveToken(token);
         uploader.configure(serverUrl, token);
+        startupNotice = null;
 
         if (loginWindow && !loginWindow.isDestroyed()) {
             loginWindow.close();
@@ -211,21 +236,56 @@ app.whenReady().then(async () => {
     // actually watches ~/TaxoneWatch.
     createTray();
 
-    const token = await auth.getToken();
-    const serverUrl = auth.getServerUrl();
-    if (!token) {
+    // After the host migration, before anything authenticated: the stored
+    // host is validated here, and a rejected one is cleared with the token
+    // (see enforcePersistedServerUrl in auth.js). On 'login' nothing below
+    // runs — no client, no watcher, no upload queue, no reconnect loop —
+    // until a sign-in stores a valid host again.
+    // resolveStartup handles a failed host check itself, but anything after
+    // it — getToken()'s store read, say — can still throw. Uncaught, that
+    // rejects whenReady and leaves the user with a tray and no window. Stop
+    // instead: log, send nothing, remove nothing, open the sign-in window.
+    let decision;
+    try {
+        decision = await resolveStartup({ auth, uploader });
+    } catch (err) {
+        debugLog(`[startup] Startup check failed; not resuming, nothing removed: ${err.message}`);
+        decision = {
+            action: 'login',
+            notice: `Quework Desktop could not start normally (${err.message}), so it has not connected. `
+                + 'Nothing was removed. Restart the app to try again, or sign in below.',
+        };
+    }
+    if (decision.action === 'login') {
+        startupNotice = decision.notice || null;
         showLogin();
-    } else {
-        const result = await uploader.verifyToken();
-        if (result === 'auth_error') {
-            showLogin();
-        } else {
-            // 'ok' or 'network_error' — proceed with cached credentials
-            uploader.configure(serverUrl, token);
-            startWatching();
-            initMigrationQueue();
-            showMigrationTool();
-        }
+        return;
+    }
+
+    const { serverUrl, token, status } = decision;
+    // 'ok', 'network_error' or 'tls_error' — proceed with cached credentials.
+    // configure() validates the host again and throws rather than build a
+    // client for a bad one; that must not take whenReady down.
+    try {
+        uploader.configure(serverUrl, token);
+    } catch (err) {
+        debugLog(`[startup] Not resuming, server URL rejected: ${err.message}`);
+        showLogin();
+        return;
+    }
+    startWatching();
+    initMigrationQueue();
+    showMigrationTool();
+
+    // The token may be fine, so this is not a reason to sign out — but
+    // nothing will upload, and the user should hear why now rather than from
+    // a column of failed files.
+    if (status === 'tls_error') {
+        updateTrayMenu('error');
+        new Notification({
+            title: 'Quework Desktop',
+            body: uploader.describeCertificateError(new URL(serverUrl).host),
+        }).show();
     }
 });
 
@@ -473,21 +533,9 @@ function initMigrationQueue() {
     registerMigrationIPC(migrationQueue, () => migrationWindow, uploader);
     migrationQueue.autoResume();
 
-    // Network reconnection: auto-retry failed files when connection is restored
-    setInterval(async () => {
-        if (!migrationQueue) return;
-        const stats = migrationQueue.getStats();
-        if (stats.failed > 0 && stats.queueStatus === 'idle') {
-            try {
-                const isOnline = await uploader.verifyToken();
-                if (isOnline === 'ok') {
-                    migrationQueue.retryAllFailed();
-                }
-            } catch {
-                // still offline, do nothing
-            }
-        }
-    }, 30000);
+    // Network reconnection: auto-retry failed files when connection is restored.
+    // retryFailedIfOnline never rejects — see src/reconnect.js.
+    setInterval(() => retryFailedIfOnline(migrationQueue, uploader), 30000);
 }
 
 function dequeueFile() {
@@ -541,13 +589,14 @@ ipcMain.handle('auth:login', async (_, { serverUrl, token }) => {
         }
         const canonicalUrl = check.url;
 
-        const isValid = await uploader.verifyTokenWith(canonicalUrl, token);
-        if (!isValid) {
-            return { success: false, error: 'Invalid token. Check your token and server URL.' };
+        const verdict = await uploader.verifyTokenWith(canonicalUrl, token);
+        if (!verdict.ok) {
+            return { success: false, error: verdict.error || 'Invalid token. Check your token and server URL.' };
         }
         await auth.saveToken(token);
         auth.saveServerUrl(canonicalUrl);
         uploader.configure(canonicalUrl, token);
+        startupNotice = null;
 
         startWatching();
         initMigrationQueue();
@@ -693,6 +742,9 @@ ipcMain.handle('queue:state', async () => {
 ipcMain.handle('get-server-url', async () => {
     return auth.getServerUrl();
 });
+
+// Why the sign-in window opened at startup, if there is a reason to show.
+ipcMain.handle('auth:get-startup-notice', async () => startupNotice);
 
 // Browser sign-in handoff. This used to be a general "open any URL the
 // renderer asks for" channel; it has only ever had one caller, so narrow it

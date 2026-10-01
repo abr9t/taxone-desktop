@@ -1,6 +1,6 @@
 const path = require('path');
 const Store = require('electron-store');
-const { debugError } = require('./debug-log');
+const { debugError, debugLog } = require('./debug-log');
 
 const store = new Store({ name: 'taxone-settings' });
 
@@ -55,8 +55,25 @@ try {
     console.warn('keytar not available — using encrypted electron-store for token storage');
 }
 
+// Set when clearToken() could not delete the keychain entry. The keychain
+// still holds a token that was meant to be gone — after a rejected host it
+// may already have been sent there — so while this is set getToken() does
+// not read the keychain at all, only the electron-store fallback, which
+// clearToken() did delete. Removed only once saveToken() has put a new token
+// in the keychain, so the revoked one can never be read back.
+const KEYCHAIN_REVOKED = '_keychainTokenRevoked';
+
+// The same revocation, for this run, in memory — so it holds even when the
+// store refuses the flag write. Without it, a failed keychain delete plus a
+// failed flag write would leave getToken() reading the revoked token back.
+let keychainRevokedThisRun = false;
+
+function keychainRevoked() {
+    return keychainRevokedThisRun || !!store.get(KEYCHAIN_REVOKED);
+}
+
 async function getToken() {
-    if (keytar) {
+    if (keytar && !keychainRevoked()) {
         try {
             return await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
         } catch {
@@ -72,21 +89,42 @@ async function saveToken(token) {
     if (keytar) {
         try {
             await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, token);
+            keychainRevokedThisRun = false;
+            store.delete(KEYCHAIN_REVOKED);
         } catch {
-            // keytar failed — token is still in electron-store
+            // keytar failed — token is still in electron-store, and a
+            // revoked keychain entry stays unread
         }
     }
 }
 
 async function clearToken() {
-    if (keytar) {
-        try {
-            await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
-        } catch {
-            // ignore
+    // The _token fallback first: it is the plain-text copy, and the one this
+    // app can always reach. try/finally so the keychain delete is still
+    // attempted if it throws.
+    try {
+        store.delete('_token');
+    } finally {
+        if (keytar) {
+            try {
+                await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
+            } catch (err) {
+                revokeKeychainToken(err);
+            }
         }
     }
-    store.delete('_token');
+}
+
+function revokeKeychainToken(err) {
+    keychainRevokedThisRun = true;
+    debugLog(`[auth] Could not delete the keychain token (${err.message}); marked it revoked so it is never read again`);
+    try {
+        store.set(KEYCHAIN_REVOKED, true);
+    } catch (flagErr) {
+        // Still revoked for this run (above). After a restart the keychain
+        // entry would be readable again — logged so that is on record.
+        debugLog(`[auth] Could not persist the keychain revocation (${flagErr.message}); it holds for this run only`);
+    }
 }
 
 function getServerUrl() {
@@ -236,8 +274,67 @@ function saveServerUrl(url) {
     return result.url;
 }
 
+// ─── Persisted host, checked on read ──────────────────────────────
+//
+// validateServerUrl() guards every write, but an install upgraded from v1.1.5
+// can be carrying a host written before that gate existed — an unvalidated
+// taxone-desktop://connect link was enough — and startup sends the bearer
+// token there unprompted. main.js runs this once, after migrateLegacyHost()
+// and before anything authenticated.
+//
+// A rejected host is cleared together with the token, from the keychain and
+// the electron-store fallback both: it may already have been sent to that
+// host, so it is no longer a secret worth keeping.
+
+/**
+ * @returns {Promise<{ok: true, url: string} | {ok: false, rejected: string, error: string}>}
+ *          url is '' when nothing is stored, otherwise the canonical form,
+ *          which is persisted if the stored string differed.
+ */
+async function enforcePersistedServerUrl() {
+    const stored = store.get('serverUrl', '');
+    if (stored === '' || stored === null || stored === undefined) return { ok: true, url: '' };
+
+    const result = validateServerUrl(stored);
+    if (result.ok) {
+        if (result.url !== stored) {
+            // Its own try: persisting the canonical form is tidying, not
+            // validation. A store that refuses the write must not turn a
+            // valid host into a failed check — resolveStartup() would stop
+            // and open the sign-in window. Carry on with result.url; the next
+            // launch tries the write again.
+            try {
+                store.set('serverUrl', result.url);
+                debugLog(`[startup] Stored server URL canonicalised: ${stored} -> ${result.url}`);
+            } catch (err) {
+                debugLog(`[startup] Could not persist the canonical server URL (${err.message}); using ${result.url} for this launch`);
+            }
+        }
+        return { ok: true, url: result.url };
+    }
+
+    // A rejection: the one case that removes anything. Each removal is
+    // attempted even if another fails, and a failure is logged rather than
+    // thrown — a throw would reach resolveStartup()'s "nothing was removed"
+    // path and tell the user something untrue about a rejected host.
+    const failures = [];
+    try {
+        store.delete('serverUrl');
+    } catch (err) {
+        failures.push(`host: ${err.message}`);
+    }
+    try {
+        await clearToken();
+    } catch (err) {
+        failures.push(`token: ${err.message}`);
+    }
+    debugLog(`[startup] Stored server URL rejected; cleared it and the token: ${stored} (${result.error})`
+        + (failures.length ? `. Removal incomplete — ${failures.join('; ')}` : ''));
+    return { ok: false, rejected: String(stored), error: result.error };
+}
+
 module.exports = {
     getToken, saveToken, clearToken,
     getServerUrl, saveServerUrl, validateServerUrl,
-    migrateLegacyHost,
+    migrateLegacyHost, enforcePersistedServerUrl,
 };
