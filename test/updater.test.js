@@ -215,6 +215,32 @@ async function main() {
         ok(`kept after ${name}`);
     }
 
+    // The same keep cases, asserted on the controller's own state rather than
+    // on update-policy's answer: after each, the downloaded update still
+    // installs on quit and from the tray, nothing was withdrawn, and the
+    // decision was made without throwing — a throw would also leave it
+    // armed (the controller catches it), which must not pass for a keep.
+    for (const [name, nextCheck] of [
+        ['a failed check', rejectWith('net::ERR_NAME_NOT_RESOLVED')],
+        ['a null result', async () => null],
+        ['a result without isUpdateAvailable', async () => ({ updateInfo: { version: '1.2.0' } })],
+        ['a result without a version (not available)', async () => ({ isUpdateAvailable: false, updateInfo: {} })],
+        ['a result without a version (available)', async () => ({ isUpdateAvailable: true, updateInfo: { version: '' } })],
+        ['a result without updateInfo', async () => ({ isUpdateAvailable: false })],
+    ]) {
+        const s = setup();
+        s.updater.emit('update-downloaded', { version: '1.2.1' });
+        s.updater.nextCheck = nextCheck;
+        await s.controller.check('test');
+        assert.strictEqual(s.updater.autoInstallOnAppQuit, true, `${name}: install on quit still armed`);
+        assert.strictEqual(s.controller.downloadedVersion, '1.2.1', `${name}: still offered`);
+        assert.ok(!s.logs.some(l => l.includes('no longer offered')), `${name}: nothing withdrawn`);
+        assert.ok(!s.logs.some(l => l.includes('Could not apply the check result')), `${name}: decided without throwing`);
+        assert.deepStrictEqual(s.controller.restartToUpdate(), { ok: true }, `${name}: Restart to Update still installs`);
+        assert.deepStrictEqual(s.updater.installs, [[true, true]]);
+        ok(`controller: ${name} leaves the downloaded update armed and installable`);
+    }
+
     {
         const s = setup();
         s.updater.emit('update-downloaded', { version: '1.2.1' });
