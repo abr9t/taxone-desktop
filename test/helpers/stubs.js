@@ -63,8 +63,11 @@ function recordingAxios() {
     const calls = [];
     // Set control.failWith to an Error (with .code) to make every request
     // reject with it after being recorded — a certificate or connection failure.
-    const control = { failWith: null };
+    // Set control.gate to a promise to hold every request open until it
+    // settles — an upload in flight.
+    const control = { failWith: null, gate: null };
     const respond = async () => {
+        if (control.gate) await control.gate;
         if (control.failWith) throw control.failWith;
         return { status: 200, data: {} };
     };
