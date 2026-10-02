@@ -69,3 +69,37 @@
   not touch: axios (direct), form-data and follow-redirects (via axios),
   fast-uri (via electron-store) and xlsx (direct, no fix upstream). Update
   axios, and replace or contain xlsx (it only writes the queue export).
+- Migration queue: reset a persisted `running` status to idle in the
+  MigrationQueue constructor. The status is loaded at construction
+  (migration.js:94), and a quit or crash mid-run leaves `running` saved; on
+  the next launch autoResume() -> start() returns early (migration.js:341),
+  nothing uploads, and any file left pending stays pending. Restart to
+  Update then refuses forever on that install (pending > 0), until someone
+  pauses and starts the queue. test/update-policy.test.js pins today's
+  behaviour and must change with the fix.
+- Migration queue: activeUploads-- leaks when _updateFile() throws, either
+  before the try in _uploadFile() (marking the file uploading) or inside
+  its catch (retry or permanent-failure update). _updateFile() calls the
+  onFileUpdate/onProgress callbacks, so a throwing callback leaves a slot
+  held: with concurrency 1 the queue stalls, and restartBlockers() sees
+  activeUploads > 0 and refuses the restart for good. Decrement in a
+  finally.
+- Updater: a config.json that cannot be written makes launches look like
+  first launches. startUpdates() reads lastLaunchedVersion and then fails
+  to record the new one, so if the key was never written every launch is a
+  first launch, and after an update every launch of the new version is:
+  no check 5 minutes after launch, only the 6-hourly one. Logged as "Could
+  not read or record lastLaunchedVersion"; consider recording the version
+  somewhere that does not share the store's failure.
+- Release workflow: narrow the write token. GH_TOKEN is passed to the
+  publish step only, but `contents: write` is granted to the whole publish
+  job, so the job token every step can reach is a write token (checkout and
+  setup-node take github.token by default; npm ci and npm test run in the
+  same job). Split into a read-only build job that uploads the three files
+  as an artifact and a write job that only downloads and publishes them.
+- Updater: Restart to Update dialog wording when the update was withdrawn
+  between building the tray menu and the click. A menu already open still
+  shows "Restart to Update (x.y.z)"; the click then gets "no update is ready
+  to install" inside a dialog that says the app "will not restart while
+  files are uploading or waiting". Say that the update was withdrawn
+  instead.
