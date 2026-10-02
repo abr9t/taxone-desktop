@@ -925,8 +925,15 @@ tray, `startUpdates()`, the host check, then the electron-updater load.
     pause, so a restart would un-pause it), an unconfirmed watch-folder file
     (in memory only — a restart drops it) or a confirm-window upload. A queue
     that cannot be read blocks. Otherwise a dialog names what is in flight
-    and the update stays ready. The queue's `running` flag is deliberately not
-    a rule: it can stay set with nothing left to do and would block forever.
+    and the update stays ready. The queue's `running` status is deliberately
+    not a rule. `MigrationQueue` loads its persisted status at construction
+    (`migration.js:94`), and a quit or crash mid-run leaves `running` saved.
+    On the next launch `autoResume()` calls `start()`, which returns early
+    because the status already says running (`migration.js:341`), so
+    `_processNext()` never runs, nothing uploads and the status never clears.
+    Gating on it would refuse every restart on that install. (If pending files
+    are left in that stuck queue, the pending rule refuses anyway — see
+    `BACKLOG.md`.)
 - **Never throws, never rejects unhandled.** Every check resolves; the
   download promise, which rejects on its own, is caught; an `'error'` emit
   cannot throw; tray, notification and installer failures are logged. If

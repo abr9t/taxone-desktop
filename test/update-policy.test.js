@@ -37,7 +37,9 @@ function queue(stats = {}, activeUploads = 0) {
 }
 
 {
-    // A 'running' flag with no work behind it must not block forever.
+    // A persisted 'running' status is loaded at construction and, because
+    // start() then returns early, never cleared (migration.js:94 and :341).
+    // With no work behind it, it must not block the restart forever.
     assert.deepStrictEqual(restartBlockers({ queue: queue({ queueStatus: 'running' }) }), []);
     ok("a stale 'running' flag with nothing pending or uploading does not block");
 }
@@ -71,6 +73,53 @@ for (const [name, state, why] of ALONE) {
     assert.strictEqual(reasons.length, 1);
     assert.match(reasons[0], /could not be read \(store corrupt\)/);
     ok('a queue that cannot be read blocks (fails closed) and does not throw');
+}
+
+// ─── The real MigrationQueue with a persisted 'running' status ─────
+//
+// Why 'running' is not a blocker, shown on the real queue rather than
+// described: the status saved by a quit or crash mid-run is loaded at
+// construction (migration.js:94), and autoResume() -> start() returns early
+// because it already says running (migration.js:341). Nothing processes, and
+// the status never clears. This pins today's behaviour; the BACKLOG fix
+// (reset a persisted 'running' in the constructor) will have to update it.
+
+async function persistedRunning(files) {
+    const { installStubs } = require('./helpers/stubs');
+    const stubs = installStubs({});
+    try {
+        delete require.cache[require.resolve('../src/migration')];
+        const { MigrationQueue } = require('../src/migration');
+        stubs.store.set('status', 'running');
+        stubs.store.set('files', files);
+        const uploads = [];
+        const q = new MigrationQueue({ uploadFn: async f => { uploads.push(f); return {}; }, concurrency: 1 });
+        q.autoResume();
+        await new Promise(r => setTimeout(r, 700)); // past the 500 ms throttle
+        return { q, uploads };
+    } finally {
+        stubs.restore();
+    }
+}
+
+const entry = (id, status) => ({ id, status, absolutePath: __filename, filename: `${id}.txt`, clientId: 0, retries: 0 });
+
+async function realQueueCases() {
+    {
+        const { q, uploads } = await persistedRunning([entry('a', 'completed'), entry('b', 'failed')]);
+        assert.strictEqual(q.status, 'running', "precondition: the persisted 'running' survives autoResume");
+        assert.deepStrictEqual(uploads, []);
+        assert.deepStrictEqual(restartBlockers({ queue: q }), [], 'nothing pending or uploading: no blocker');
+        ok("real queue: a persisted 'running' with no work left does not block the restart");
+    }
+    {
+        const { q, uploads } = await persistedRunning([entry('a', 'pending')]);
+        assert.strictEqual(q.status, 'running');
+        assert.deepStrictEqual(uploads, [], 'start() returned early: the pending file is never uploaded');
+        const reasons = restartBlockers({ queue: q });
+        assert.deepStrictEqual(reasons, ['1 file(s) waiting in the upload queue'], JSON.stringify(reasons));
+        ok("real queue: a pending file stranded by a persisted 'running' blocks the restart (BACKLOG: reset it at construction)");
+    }
 }
 
 // ─── isFirstLaunchOfVersion ───────────────────────────────────────
@@ -126,5 +175,10 @@ for (const [name, outcome] of [
     ok(`keeps it when the check gave ${name}`);
 }
 
-console.log('');
-console.log(`${passed} passed`);
+realQueueCases().then(() => {
+    console.log('');
+    console.log(`${passed} passed`);
+}).catch(err => {
+    console.error(err);
+    process.exit(1);
+});
