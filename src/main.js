@@ -245,6 +245,8 @@ app.whenReady().then(async () => {
     // the sign-in window for a rejected host, and a signed-out install is
     // exactly the one that may need an update (a widened allowlist, say).
     // Updates go to GitHub, never to the stored host, and send no token.
+    // Only the bookkeeping runs here; electron-updater itself loads on the
+    // next turn of the event loop, after the host check has started.
     startUpdates();
 
     // After the host migration, before anything authenticated: the stored
@@ -419,7 +421,19 @@ function startUpdates() {
             // Unknown counts as a first launch: the quieter choice.
             debugLog(`[updater] Could not read or record lastLaunchedVersion: ${err.message}`);
         }
+        const firstLaunchOfVersion = isFirstLaunchOfVersion(lastLaunched, version);
 
+        // Loading electron-updater (and building its updater) costs around
+        // 100 ms. Not here: on the next turn of the event loop, so it never
+        // sits between the tray and the stored-host check.
+        setImmediate(() => loadUpdates(version, firstLaunchOfVersion));
+    } catch (err) {
+        debugLog(`[updater] Not started: ${err.message}`);
+    }
+}
+
+function loadUpdates(version, firstLaunchOfVersion) {
+    try {
         const { autoUpdater } = require('electron-updater');
         updates = createUpdateController({
             updater: autoUpdater,
@@ -436,7 +450,7 @@ function startUpdates() {
                 setInterval: (fn, ms) => setInterval(fn, ms),
             },
         });
-        updates.start({ firstLaunchOfVersion: isFirstLaunchOfVersion(lastLaunched, version) });
+        updates.start({ firstLaunchOfVersion });
         debugLog(`[updater] Started for ${version}`);
         if (tray) updateTrayMenu(trayStatus);
     } catch (err) {

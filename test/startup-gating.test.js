@@ -35,6 +35,7 @@ function freshSeen() {
     return {
         windows: [], queues: 0, autoResumes: 0, watchStarts: 0, intervals: [], notifications: [], updateChecks: 0,
         menu: null, dialogs: [], installs: [], onFile: null,
+        order: [],
     };
 }
 
@@ -59,7 +60,7 @@ const electron = {
         isDestroyed() { return false; }
         static getFocusedWindow() { return null; }
     },
-    Tray: class { setToolTip() {} on() {} popUpContextMenu() {} },
+    Tray: class { constructor() { seen.order.push('tray'); } setToolTip() {} on() {} popUpContextMenu() {} },
     Menu: { buildFromTemplate: t => { seen.menu = t; return t; } },
     ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } },
     nativeImage: { createFromPath: () => ({}), createEmpty: () => ({}) },
@@ -109,12 +110,44 @@ const stubs = installStubs({
         './auto-launch': { reconcileAutoLaunch() {}, AUTO_LAUNCH_ENTRY_NAME: 'com.taxone.desktop' },
         'electron-updater': {
             get autoUpdater() {
+                seen.order.push('updaterLoaded');
                 if (updaterLoadError) throw updaterLoadError;
                 return autoUpdater;
             },
         },
     },
 });
+
+// Store reads and the lastLaunchedVersion write go into seen.order, so the
+// launch sequence can be checked: startUpdates() records the version first
+// thing, and resolveStartup() starts with a read of serverUrl.
+const mapHas = stubs.store.has;
+stubs.store.has = function (key) {
+    if (seen) seen.order.push(`read:${key}`);
+    return mapHas.call(this, key);
+};
+const mapSet = stubs.store.set;
+stubs.store.set = function (key, val) {
+    if (seen && key === 'lastLaunchedVersion') seen.order.push('startUpdates');
+    return mapSet.call(this, key, val);
+};
+
+// tray < startUpdates < host check < electron-updater loaded. The host check
+// is the first serverUrl read after the tray exists (the migrations before it
+// read serverUrl too).
+function assertLaunchOrder(when) {
+    const o = seen.order;
+    const tray = o.indexOf('tray');
+    const start = o.indexOf('startUpdates');
+    const hostCheck = o.indexOf('read:serverUrl', tray);
+    const loaded = o.indexOf('updaterLoaded');
+    for (const [name, i] of [['tray', tray], ['startUpdates', start], ['host check', hostCheck], ['electron-updater load', loaded]]) {
+        assert.ok(i !== -1, `${when}: no ${name} in ${JSON.stringify(o)}`);
+    }
+    assert.ok(tray < start, `${when}: startUpdates ran before the tray existed`);
+    assert.ok(start < hostCheck, `${when}: startUpdates ran after the host check started`);
+    assert.ok(hostCheck < loaded, `${when}: electron-updater was loaded before the host check started`);
+}
 
 const realSetInterval = global.setInterval;
 global.setInterval = (fn, ms) => { seen.intervals.push(ms); return { unref() {} }; };
@@ -172,9 +205,11 @@ async function main() {
     assert.strictEqual(seen.watchStarts, 1);
     assert.strictEqual(reconnectLoops(), 1);
     assertUpdatesStarted('valid host');
+    assertLaunchOrder('valid host');
     assert.ok(rec.calls.some(c => c.baseURL === NEW), 'the token check went to the stored host');
     assert.strictEqual(await handlers['auth:get-startup-notice'](), null);
     ok('control: a valid host configures the client, starts the watcher, the queue and the 30s loop');
+    ok('launch order: tray, then startUpdates, then the host check, and only then electron-updater is loaded');
 
     // ─── A rejected host starts none of it ─────────────────────────
     for (const bad of ['https://evil.example', 'https://caputa.quework.app.evil.com']) {
@@ -185,6 +220,7 @@ async function main() {
         assert.strictEqual(seen.autoResumes, 0, 'no autoResume');
         assert.strictEqual(reconnectLoops(), 0, 'no 30s reconnect loop');
         assertUpdatesStarted(`stored ${bad}`);
+        assertLaunchOrder(`stored ${bad}`);
         assert.strictEqual(seen.watchStarts, 0, 'no watcher');
         assert.strictEqual(stubs.store.has('serverUrl'), false, 'host cleared');
         assert.strictEqual(stubs.store.has('_token'), false, 'fallback token cleared');

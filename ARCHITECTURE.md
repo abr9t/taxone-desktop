@@ -888,7 +888,11 @@ Every local build passes `--publish never`; only CI publishes (see [Release pipe
 and **before** the stored-host check: `resolveStartup()` returns early to the
 sign-in window for a rejected host, and a signed-out install is exactly the one
 a fixed release may be for. Updates go to GitHub and send no token. Unpackaged
-builds (`npm start`, `npm run dev`) do not start it.
+builds (`npm start`, `npm run dev`) do not start it. `startUpdates()` itself
+only records `lastLaunchedVersion`; electron-updater (about 100 ms to load and
+construct) is required on the next turn of the event loop (`setImmediate`), so
+it never delays the host check. `startup-gating.test.js` checks the order:
+tray, `startUpdates()`, the host check, then the electron-updater load.
 
 - **Configuration** (`configureUpdater`): `autoDownload: true`,
   `autoInstallOnAppQuit: true`, `disableWebInstaller: true`,
