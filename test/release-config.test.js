@@ -120,6 +120,11 @@ function localScriptProblems(p) {
 
 // ─── .github/workflows/release.yml ────────────────────────────────
 
+// The exact line release.yml runs: the pushed tag must be v + package.json's
+// version, so a release cannot be published under a number the app does not
+// report.
+const TAG_CHECK = 'test "$GITHUB_REF_NAME" = "v$(node -p "require(\'./package.json\').version")"';
+
 const allSteps = wf => Object.entries(wf.jobs).flatMap(([job, j]) => (j.steps || []).map(s => ({ job, ...s })));
 
 function workflowProblems(wf) {
@@ -139,6 +144,16 @@ function workflowProblems(wf) {
     if (JSON.stringify(publish.permissions) !== '{"contents":"write"}') problems.push('publish job permissions are not exactly contents: write');
     if (!/github\.event_name == 'push'/.test(publish.if || '') || !/github\.ref_type == 'tag'/.test(publish.if || '')) {
         problems.push('publish job does not require a pushed tag');
+    }
+
+    const publishSteps = publish.steps || [];
+    const tagCheck = publishSteps.findIndex(s => s.run === TAG_CHECK);
+    const build = publishSteps.findIndex(s => /electron-builder/.test(s.run || ''));
+    if (tagCheck === -1) {
+        problems.push('the publish job does not check the tag against package.json');
+    } else {
+        if (publishSteps[tagCheck].shell !== 'bash') problems.push('the tag check does not run in bash (the runner default is pwsh)');
+        if (build === -1 || tagCheck > build) problems.push('the tag check does not run before the build');
     }
 
     const steps = allSteps(wf);
@@ -198,6 +213,14 @@ function workflowProblems(wf) {
         ['artifact kept 90 days', wf => { step(wf, 'dry-run', /upload-artifact/).with['retention-days'] = 90; }],
         ['no dispatch trigger', wf => { delete wf.on.workflow_dispatch; }],
         ['tests skipped before publishing', wf => { wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.run !== 'npm test'); }],
+        ['no tag/version check', wf => { wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.run !== TAG_CHECK); }],
+        ['the tag check after the build', wf => {
+            const steps = wf.jobs.publish.steps;
+            const check = steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 1)[0];
+            steps.push(check);
+        }],
+        ['the tag check in pwsh', wf => { delete step(wf, 'publish', /GITHUB_REF_NAME/).shell; }],
+        ['a weakened tag check', wf => { step(wf, 'publish', /GITHUB_REF_NAME/).run = 'test -n "$GITHUB_REF_NAME"'; }],
     ]) {
         const wf = clone(workflow);
         mutate(wf);
@@ -206,6 +229,7 @@ function workflowProblems(wf) {
     ok('release.yml: only a pushed tag publishes, as a draft, from one step in the one job with write access');
     ok('release.yml: the dry run builds the three files into a 7-day artifact, with read-only access and no token');
     ok('release.yml: every action is SHA-pinned, checkout keeps no token, tests run before any build');
+    ok('release.yml: the publish job checks the tag is v + package.json version, in bash, before the build');
 }
 
 console.log('');
