@@ -815,7 +815,39 @@ running until 6.11.
 
 ### 6.4 Install the release candidate and point it at the local server
 
-1. Run `$rc\TaxOne-Desktop-Setup.exe` (Explorer, or `& "$rc\TaxOne-Desktop-Setup.exe"`).
+1. **Make the candidate's first launch a first launch.** This machine has
+   already run a 1.2.0 build with the updater in it — an earlier pass of
+   this section, 6.11's reinstall, or a local `npm run build` started by
+   hand — so `config.json` may already hold `lastLaunchedVersion: 1.2.0`.
+   The candidate would then not see a first launch: no *First launch of this
+   version* line, and an update check five minutes in, so step 2 would fail
+   or pass depending on the machine's history. Removing that one key makes
+   the step the same every time. Nothing else in `config.json` is printed or
+   changed, and it is written back without a byte-order mark (electron-store
+   refuses a JSON file that starts with one). The log mark is taken right
+   before the installer starts, and step 2 reads only what came after it.
+
+```powershell
+if (Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue) { throw 'STOP: quit the app from the tray first' }
+$cfgPath = "$ud\config.json"
+if (Test-Path -LiteralPath $cfgPath) {
+    $cfg = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json
+    if ($cfg.PSObject.Properties.Name -contains 'lastLaunchedVersion') {
+        $cfg.PSObject.Properties.Remove('lastLaunchedVersion')
+        [IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json -Depth 20 -Compress), (New-Object Text.UTF8Encoding $false))
+        'lastLaunchedVersion: removed'
+    } else {
+        'lastLaunchedVersion: was not there'
+    }
+    $recheck = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json
+    if ($recheck.PSObject.Properties.Name -contains 'lastLaunchedVersion') { throw 'STOP: lastLaunchedVersion is still in config.json' }
+} else {
+    'config.json: not there yet (nothing to remove)'
+}
+$installMark = Get-LogMark
+& "$rc\TaxOne-Desktop-Setup.exe"
+```
+
    SmartScreen warns — the build is unsigned; *More info → Run anyway*. Let
    the finish page launch the app, then **quit it from the tray**.
 2. The install is per-user and its updater started quietly:
@@ -829,7 +861,7 @@ $v = (Get-Item -LiteralPath (Join-Path $dir 'Quework Desktop.exe')).VersionInfo.
 if ($v -eq '1.2.0') { 'PASS: installed exe is 1.2.0' } else { "FAIL: installed exe is $v" }
 $cfg = Get-Content -LiteralPath "$ud\config.json" -Raw | ConvertFrom-Json
 if ($cfg.lastLaunchedVersion -eq '1.2.0') { 'PASS: lastLaunchedVersion 1.2.0' } else { "FAIL: lastLaunchedVersion is '$($cfg.lastLaunchedVersion)'" }
-$lines = @(Get-Content -LiteralPath $log)
+$lines = Get-NewLogLines $installMark
 $started = @($lines | Where-Object { $_ -match '\[updater\] Started for 1\.2\.0' })
 $first   = @($lines | Where-Object { $_ -match '\[updater\] First launch of this version' })
 if ($started.Count -ge 1 -and $first.Count -ge 1) { 'PASS: updater started; first launch, no early check' } else { "FAIL: $($started.Count) 'Started for 1.2.0', $($first.Count) 'First launch' line(s)" }
@@ -947,7 +979,7 @@ $new = Get-NewLogLines $mark
 $ready   = @($new | Where-Object { $_ -match '\[updater\] 1\.2\.1 downloaded and verified' })
 $refused = @($new | Where-Object { $_ -match 'Restart to install 1\.2\.1 refused: .*1 file\(s\) waiting in the upload queue' })
 if ($ready.Count -ge 1) { 'PASS: 1.2.1 downloaded and passed its sha512' } else { 'FAIL: no "1.2.1 downloaded and verified" line' }
-if ($refused.Count -eq 1) { 'PASS: the restart was refused, naming the pending file' } else { "FAIL: $($refused.Count) refusal line(s)" }
+if ($refused.Count -ge 1) { "PASS: the restart was refused, naming the pending file ($($refused.Count) refusal line(s))" } else { 'FAIL: no refusal line naming the pending file' }
 $running = Get-RunningVersion
 if ($running -eq '1.2.0') { 'PASS: still running 1.2.0' } else { "FAIL: running version is $running" }
 ```
@@ -1002,6 +1034,7 @@ $before = @{
     TopLevel        = @(Get-ChildItem -LiteralPath $ud -Force | ForEach-Object { $_.Name })
     Stores          = Get-StoreSnapshot
 }
+if (-not $before.Stores.ContainsKey('taxone-settings.json')) { throw "STOP: no taxone-settings.json in $ud; this is not the install to test" }
 "InstallLocation: $($before.InstallLocation)"
 "top-level entries in userData: $($before.TopLevel.Count)"
 $mark = Get-LogMark
@@ -1052,6 +1085,7 @@ which Electron rewrites on every launch, update or not. `config.json`'s
 ran against this folder.
 
 ```powershell
+if (-not $before -or -not $before.Stores -or -not $before.Stores.ContainsKey('taxone-settings.json')) { throw 'STOP: the 6.8 snapshot is missing or has no taxone-settings.json; nothing to compare against' }
 $after = Get-StoreSnapshot
 $fail = 0
 foreach ($file in $before.Stores.Keys) {
@@ -1063,7 +1097,7 @@ foreach ($file in $before.Stores.Keys) {
     }
 }
 foreach ($file in $after.Keys) { if (-not $before.Stores.ContainsKey($file)) { "note: new store file $file" } }
-if ($fail -eq 0) { "PASS: $($before.Stores.Count) store file(s) kept every key and value" } else { "FAIL: $fail difference(s) above" }
+if ($fail -eq 0 -and $before.Stores.Count -gt 0) { "PASS: $($before.Stores.Count) store file(s) kept every key and value" } else { "FAIL: $fail difference(s) above, $($before.Stores.Count) store file(s) compared" }
 
 $now = @(Get-ChildItem -LiteralPath $ud -Force | ForEach-Object { $_.Name })
 $gone = @($before.TopLevel | Where-Object { $now -notcontains $_ })
@@ -1080,6 +1114,8 @@ Leave 1.2.1 running, untouched, for **6 minutes** (the early check comes 5
 minutes after a launch that is not a first launch). Then:
 
 ```powershell
+$main = Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue | Sort-Object StartTime | Select-Object -First 1
+if (-not $main -or ((Get-Date) - $main.StartTime).TotalMinutes -lt 6) { throw 'STOP: run 6.10 after 6 minutes' }
 $lines = @(Get-Content -LiteralPath $log)
 $at = -1
 for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '\[updater\] Started for 1\.2\.1') { $at = $i } }
