@@ -125,11 +125,25 @@ function localScriptProblems(p) {
 // report.
 const TAG_CHECK = 'test "$GITHUB_REF_NAME" = "v$(node -p "require(\'./package.json\').version")"';
 
+// A secret or the job token, written into a workflow.
+const SECRET = /\$\{\{\s*(secrets\.|github\.token\b)/;
+
+// `on:` may be a string, a list or a map; these are the event names.
+function triggers(on) {
+    if (typeof on === 'string') return [on];
+    if (Array.isArray(on)) return on;
+    return Object.keys(on || {});
+}
+
 const allSteps = wf => Object.entries(wf.jobs).flatMap(([job, j]) => (j.steps || []).map(s => ({ job, ...s })));
 
 function workflowProblems(wf) {
     const problems = [];
-    const on = wf.on || {};
+    // Only a tag push or a person may start this workflow. pull_request_target
+    // in particular runs with write access on code from a fork.
+    const extra = triggers(wf.on).filter(t => t !== 'push' && t !== 'workflow_dispatch');
+    if (extra.length > 0) problems.push(`triggers other than push and workflow_dispatch: ${extra.join(', ')}`);
+    const on = (wf.on && typeof wf.on === 'object' && !Array.isArray(wf.on)) ? wf.on : {};
     if (!on.push || JSON.stringify(on.push.tags) !== '["v*"]') problems.push('publishing is not triggered by v* tags');
     if (!('workflow_dispatch' in on)) problems.push('no workflow_dispatch dry run');
     if (JSON.stringify(wf.permissions) !== '{}') problems.push('top-level permissions are not {}');
@@ -161,7 +175,13 @@ function workflowProblems(wf) {
     if (publishing.length !== 1 || publishing[0].job !== 'publish') problems.push('exactly one step, in the publish job, may publish');
     else if (!/github\.ref_type == 'tag'/.test(publishing[0].if || '')) problems.push('the publish step does not check ref_type == tag itself');
 
-    const tokenSteps = steps.filter(s => /secrets\./.test(JSON.stringify(s.env || {}) + JSON.stringify(s.with || {})));
+    // Secrets reach exactly one step. Workflow- or job-level env would hand
+    // them to every step under it, npm ci included.
+    if (SECRET.test(JSON.stringify(wf.env || {}))) problems.push('workflow-level env hands out a secret');
+    for (const [name, j] of Object.entries(jobs)) {
+        if (SECRET.test(JSON.stringify(j.env || {}))) problems.push(`job-level env of ${name} hands out a secret`);
+    }
+    const tokenSteps = steps.filter(s => SECRET.test(JSON.stringify(s.env || {}) + JSON.stringify(s.with || {})));
     if (tokenSteps.some(s => s !== publishing[0])) problems.push('a step other than the publish step is handed a secret');
 
     for (const s of steps.filter(x => x.uses)) {
@@ -212,6 +232,13 @@ function workflowProblems(wf) {
         }],
         ['artifact kept 90 days', wf => { step(wf, 'dry-run', /upload-artifact/).with['retention-days'] = 90; }],
         ['no dispatch trigger', wf => { delete wf.on.workflow_dispatch; }],
+        ['a pull_request_target trigger', wf => { wf.on.pull_request_target = { types: ['opened'] }; }],
+        ['a pull_request trigger in list form', wf => { wf.on = ['push', 'pull_request']; }],
+        ['a schedule trigger', wf => { wf.on.schedule = [{ cron: '0 0 * * *' }]; }],
+        ['GH_TOKEN in dry-run job env', wf => { wf.jobs['dry-run'].env = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }; }],
+        ['GH_TOKEN in publish job env', wf => { wf.jobs.publish.env = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }; }],
+        ['GH_TOKEN in workflow env', wf => { wf.env = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }; }],
+        ['github.token in a dry-run step', wf => { step(wf, 'dry-run', /npm run build/).env = { T: '${{ github.token }}' }; }],
         ['tests skipped before publishing', wf => { wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.run !== 'npm test'); }],
         ['no tag/version check', wf => { wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.run !== TAG_CHECK); }],
         ['the tag check after the build', wf => {
@@ -230,6 +257,7 @@ function workflowProblems(wf) {
     ok('release.yml: the dry run builds the three files into a 7-day artifact, with read-only access and no token');
     ok('release.yml: every action is SHA-pinned, checkout keeps no token, tests run before any build');
     ok('release.yml: the publish job checks the tag is v + package.json version, in bash, before the build');
+    ok('release.yml: triggered only by push and workflow_dispatch; no secret in workflow- or job-level env');
 }
 
 console.log('');
