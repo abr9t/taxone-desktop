@@ -166,8 +166,19 @@ function workflowProblems(wf) {
     if (tagCheck === -1) {
         problems.push('the publish job does not check the tag against package.json');
     } else {
+        // Exactly these keys: an `if:`, `continue-on-error:` or an `env:`
+        // that sets GITHUB_REF_NAME would each leave the step present and
+        // disarmed.
+        const keys = Object.keys(publishSteps[tagCheck]).sort();
+        if (JSON.stringify(keys) !== '["name","run","shell"]') {
+            problems.push(`the tag check step has keys ${keys.join(', ')}; it may only have name, run and shell`);
+        }
         if (publishSteps[tagCheck].shell !== 'bash') problems.push('the tag check does not run in bash (the runner default is pwsh)');
         if (build === -1 || tagCheck > build) problems.push('the tag check does not run before the build');
+    }
+
+    for (const [where, env] of [['workflow', wf.env], ['publish job', publish.env]]) {
+        if (env && Object.prototype.hasOwnProperty.call(env, 'GITHUB_REF_NAME')) problems.push(`${where} env sets GITHUB_REF_NAME, which the tag check reads`);
     }
 
     const steps = allSteps(wf);
@@ -257,6 +268,28 @@ function workflowProblems(wf) {
     ok('release.yml: the dry run builds the three files into a 7-day artifact, with read-only access and no token');
     ok('release.yml: every action is SHA-pinned, checkout keeps no token, tests run before any build');
     ok('release.yml: the publish job checks the tag is v + package.json version, in bash, before the build');
+
+    // The same check against edited copies of the release.yml text, the way
+    // someone would disarm it by hand.
+    const source = read('.github/workflows/release.yml');
+    const anchor = '        shell: bash\n';
+    assert.strictEqual(source.split(anchor).length, 2, 'the tag check step is the only "shell: bash" line');
+    for (const [why, extra] of [
+        ['if: false on the tag check', '        if: false\n'],
+        ['continue-on-error: true on the tag check', '        continue-on-error: true\n'],
+        ['a step env that pins GITHUB_REF_NAME', '        env:\n          GITHUB_REF_NAME: v1.2.0\n'],
+    ]) {
+        expectCaught(workflowProblems, yaml.load(source.replace(anchor, anchor + extra)), why);
+    }
+    for (const [why, mutate] of [
+        ['GITHUB_REF_NAME in publish job env', wf => { wf.jobs.publish.env = { GITHUB_REF_NAME: 'v1.2.0' }; }],
+        ['GITHUB_REF_NAME in workflow env', wf => { wf.env = { GITHUB_REF_NAME: 'v1.2.0' }; }],
+    ]) {
+        const wf = clone(workflow);
+        mutate(wf);
+        expectCaught(workflowProblems, wf, why);
+    }
+    ok('release.yml: the tag check cannot be disarmed (no if, continue-on-error or env on it; no GITHUB_REF_NAME above it)');
     ok('release.yml: triggered only by push and workflow_dispatch; no secret in workflow- or job-level env');
 }
 
