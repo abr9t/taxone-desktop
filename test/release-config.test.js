@@ -19,7 +19,11 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 const ROOT = path.join(__dirname, '..');
-const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
+// A Windows checkout with core.autocrlf=true has CRLF line endings. Every
+// repo file this suite reads goes through here, so the text checks below
+// can count on \n.
+const lf = text => text.replace(/\r\n/g, '\n');
+const read = f => lf(fs.readFileSync(path.join(ROOT, f), 'utf8'));
 
 const builder = yaml.load(read('electron-builder.yml'));
 const pkg = JSON.parse(read('package.json'));
@@ -319,16 +323,20 @@ function workflowProblems(wf) {
     ok('release.yml: the publish job checks the tag is v + package.json version, in bash, before the build');
 
     // The same check against edited copies of the release.yml text, the way
-    // someone would disarm it by hand.
-    const source = read('.github/workflows/release.yml');
-    const anchor = '        shell: bash\n';
-    assert.strictEqual(source.split(anchor).length, 2, 'the tag check step is the only "shell: bash" line');
-    for (const [why, extra] of [
-        ['if: false on the tag check', '        if: false\n'],
-        ['continue-on-error: true on the tag check', '        continue-on-error: true\n'],
-        ['a step env that pins GITHUB_REF_NAME', '        env:\n          GITHUB_REF_NAME: v1.2.0\n'],
-    ]) {
-        expectCaught(workflowProblems, yaml.load(source.replace(anchor, anchor + extra)), why);
+    // someone would disarm it by hand. Run on the text as read and on a CRLF
+    // copy of it, so the line-ending handling is checked on any checkout.
+    const asRead = read('.github/workflows/release.yml');
+    for (const [eol, raw] of [['as checked out', asRead], ['CRLF', asRead.replace(/\n/g, '\r\n')]]) {
+        const source = lf(raw);
+        const anchor = '        shell: bash\n';
+        assert.strictEqual(source.split(anchor).length, 2, `the tag check step is the only "shell: bash" line (${eol})`);
+        for (const [why, extra] of [
+            ['if: false on the tag check', '        if: false\n'],
+            ['continue-on-error: true on the tag check', '        continue-on-error: true\n'],
+            ['a step env that pins GITHUB_REF_NAME', '        env:\n          GITHUB_REF_NAME: v1.2.0\n'],
+        ]) {
+            expectCaught(workflowProblems, yaml.load(source.replace(anchor, anchor + extra)), `${why} (${eol})`);
+        }
     }
     for (const [why, mutate] of [
         ['GITHUB_REF_NAME in publish job env', wf => { wf.jobs.publish.env = { GITHUB_REF_NAME: 'v1.2.0' }; }],
