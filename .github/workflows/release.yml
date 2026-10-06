@@ -40,6 +40,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # Read-only diagnostic: which core.autocrlf the runner's git applies (and
+      # from which config file), and the line endings this checkout produced.
+      # Prints only; changes nothing; never fails the job.
+      - name: Line-ending diagnostic (read-only)
+        shell: bash
+        run: |
+          git config --show-origin core.autocrlf || echo "core.autocrlf: not set"
+          git ls-files --eol -- src/main.js .github/workflows/release.yml test/fixtures/tls/ca.crt
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
@@ -71,6 +80,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+
+      # Read-only diagnostic: which core.autocrlf the runner's git applies (and
+      # from which config file), and the line endings this checkout produced.
+      # Prints only; changes nothing; never fails the job.
+      - name: Line-ending diagnostic (read-only)
+        shell: bash
+        run: |
+          git config --show-origin core.autocrlf || echo "core.autocrlf: not set"
+          git ls-files --eol -- src/main.js .github/workflows/release.yml test/fixtures/tls/ca.crt
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

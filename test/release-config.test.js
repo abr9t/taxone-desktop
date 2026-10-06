@@ -129,6 +129,15 @@ function localScriptProblems(p) {
 // report.
 const TAG_CHECK = 'test "$GITHUB_REF_NAME" = "v$(node -p "require(\'./package.json\').version")"';
 
+// Read-only: which core.autocrlf the runner applies, and what the checkout
+// produced. `|| echo` because git config exits 1 when the key is unset.
+const EOL_DIAGNOSTIC = {
+    name: 'Line-ending diagnostic (read-only)',
+    shell: 'bash',
+    run: 'git config --show-origin core.autocrlf || echo "core.autocrlf: not set"\n'
+        + 'git ls-files --eol -- src/main.js .github/workflows/release.yml test/fixtures/tls/ca.crt\n',
+};
+
 // A step that builds the installer.
 const BUILDS = /electron-builder|npm run build|npm run dist/;
 
@@ -248,6 +257,10 @@ function workflowProblems(wf) {
     }
     for (const job of ['publish', 'dry-run']) {
         if (!steps.some(s => s.job === job && s.run === 'npm test')) problems.push(`${job} does not run npm test`);
+        const diag = (jobs[job] && jobs[job].steps || []).filter(s => s.name === EOL_DIAGNOSTIC.name);
+        if (diag.length !== 1 || JSON.stringify(diag[0]) !== JSON.stringify(EOL_DIAGNOSTIC)) {
+            problems.push(`${job} does not run the line-ending diagnostic exactly as specified`);
+        }
     }
     return problems;
 }
@@ -310,6 +323,21 @@ function workflowProblems(wf) {
             const steps = wf.jobs.publish.steps;
             steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'npm run dist' });
         }],
+        ['no line-ending diagnostic in dry-run', wf => {
+            wf.jobs['dry-run'].steps = wf.jobs['dry-run'].steps.filter(s => s.name !== EOL_DIAGNOSTIC.name);
+        }],
+        ['no line-ending diagnostic in publish', wf => {
+            wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.name !== EOL_DIAGNOSTIC.name);
+        }],
+        ['a diagnostic that fails when core.autocrlf is unset', wf => {
+            const d = wf.jobs['dry-run'].steps.find(s => s.name === EOL_DIAGNOSTIC.name);
+            d.run = d.run.replace(' || echo "core.autocrlf: not set"', '');
+        }],
+        ['a diagnostic that writes config', wf => {
+            const d = wf.jobs.publish.steps.find(s => s.name === EOL_DIAGNOSTIC.name);
+            d.run = `git config core.autocrlf false\n${d.run}`;
+        }],
+        ['the diagnostic in pwsh', wf => { delete wf.jobs['dry-run'].steps.find(s => s.name === EOL_DIAGNOSTIC.name).shell; }],
         ['the tag check in pwsh', wf => { delete step(wf, 'publish', /GITHUB_REF_NAME/).shell; }],
         ['a weakened tag check', wf => { step(wf, 'publish', /GITHUB_REF_NAME/).run = 'test -n "$GITHUB_REF_NAME"'; }],
     ]) {
@@ -321,6 +349,7 @@ function workflowProblems(wf) {
     ok('release.yml: the dry run builds the three files into a 7-day artifact, with read-only access and no token');
     ok('release.yml: every action is SHA-pinned, checkout keeps no token, tests run before any build');
     ok('release.yml: the publish job checks the tag is v + package.json version, in bash, before the build');
+    ok('release.yml: both jobs print core.autocrlf and the checkout line endings (read-only, bash, cannot fail)');
 
     // The same check against edited copies of the release.yml text, the way
     // someone would disarm it by hand. Run on the text as read and on a CRLF
@@ -328,8 +357,8 @@ function workflowProblems(wf) {
     const asRead = read('.github/workflows/release.yml');
     for (const [eol, raw] of [['as checked out', asRead], ['CRLF', asRead.replace(/\n/g, '\r\n')]]) {
         const source = lf(raw);
-        const anchor = '        shell: bash\n';
-        assert.strictEqual(source.split(anchor).length, 2, `the tag check step is the only "shell: bash" line (${eol})`);
+        const anchor = `        run: ${TAG_CHECK}\n`;
+        assert.strictEqual(source.split(anchor).length, 2, `the tag check's run line appears exactly once (${eol})`);
         for (const [why, extra] of [
             ['if: false on the tag check', '        if: false\n'],
             ['continue-on-error: true on the tag check', '        continue-on-error: true\n'],
