@@ -1,7 +1,8 @@
 /**
  * Standalone test for src/updater.js.
  *
- * No test framework — run with `node test/updater.test.js`.
+ * No test framework — run with `node test/updater.test.js`, after `npm ci`:
+ * Part 2 loads electron-updater itself from node_modules.
  *
  * Part 1 drives the controller with a fake updater and a fake clock: when
  * checks run, that nothing rejects or throws, what a check does to an

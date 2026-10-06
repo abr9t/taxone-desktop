@@ -5,7 +5,8 @@ Watch folder file uploader for Quework. Monitors a local folder and uploads file
 ## Setup
 
 ```bash
-npm install
+npm ci             # install exactly the locked dependencies; the tests need them
+npm test           # all suites (electron-updater and js-yaml come from node_modules)
 npm start          # run in dev mode
 npm run build:win  # build Windows installer (local only: --publish never)
 ```
