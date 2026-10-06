@@ -142,8 +142,9 @@ const EOL_DIAGNOSTIC = {
 const BUILDS = /electron-builder|npm run build|npm run dist/;
 
 // Anything that can reach a secret or the job token: secrets.X,
-// secrets['X'], toJSON(secrets), github.token, github['token'].
-const SECRET = /\bsecrets\b|github\.token|github\[/;
+// secrets['X'], toJSON(secrets), github.token, github['token'], in any case
+// (GitHub expressions are case-insensitive: SECRETS.X works).
+const SECRET = /\bsecrets\b|github\.token|github\[/i;
 // The one place a secret may appear: the publishing step's env, exactly this.
 const PUBLISH_TOKEN_ENV = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' };
 
@@ -301,6 +302,8 @@ function workflowProblems(wf) {
         ['dry-run container credentials', wf => {
             wf.jobs['dry-run'].container = { image: 'node:20', credentials: { username: 'x', password: '${{ secrets.GITHUB_TOKEN }}' } };
         }],
+        ['${{ SECRETS.GITHUB_TOKEN }} in a dry-run step', wf => { step(wf, 'dry-run', /npm run build/).env = { T: '${{ SECRETS.GITHUB_TOKEN }}' }; }],
+        ['${{ GITHUB.TOKEN }} in a dry-run run line', wf => { step(wf, 'dry-run', /npm run build/).run = 'echo ${{ GITHUB.TOKEN }}'; }],
         ['a secret in a step name', wf => { step(wf, 'dry-run', /npm run build/).name = 'Build ${{ secrets.GITHUB_TOKEN }}'; }],
         ['a secret in the publish step run line', wf => {
             const st = step(wf, 'publish', /electron-builder/);
