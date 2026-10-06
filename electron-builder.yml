@@ -34,3 +34,15 @@ nsis:
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
   installerHeaderIcon: assets/icon.ico
+
+# Where electron-builder uploads (CI only — every npm script passes
+# --publish never) and what it writes into the packaged
+# resources/app-update.yml, which tells electron-updater where to look. The
+# repo is public: no token is configured here and none ships in the app.
+# releaseType: draft — a release reaches installed apps only once a person
+# publishes it. See ARCHITECTURE.md, "Releases and auto-update".
+publish:
+  provider: github
+  owner: abr9t
+  repo: taxone-desktop
+  releaseType: draft

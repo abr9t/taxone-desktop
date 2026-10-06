@@ -9,6 +9,15 @@
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { missingDependencies, preflightMessage } = require('./helpers/preflight');
+
+// The suites need the installed dependencies (`npm ci`), electron-updater
+// and js-yaml among them. Say so before running anything.
+const missing = missingDependencies();
+if (missing.length > 0) {
+    console.error(preflightMessage(missing));
+    process.exit(1);
+}
 
 const files = fs.readdirSync(__dirname).filter(f => f.endsWith('.test.js')).sort();
 let failed = 0;

@@ -5,10 +5,16 @@ Watch folder file uploader for Quework. Monitors a local folder and uploads file
 ## Setup
 
 ```bash
-npm install
+npm ci             # install exactly the locked dependencies; the tests need them
+npm test           # all suites (electron-updater and js-yaml come from node_modules)
 npm start          # run in dev mode
-npm run build:win  # build Windows installer
+npm run build:win  # build Windows installer (local only: --publish never)
 ```
+
+Releases are built by CI from a `v*` tag into a draft GitHub release, and
+installed apps update themselves from published releases — see
+ARCHITECTURE.md, "Releases and auto-update", and UPGRADE-TEST.md section 6
+before tagging.
 
 ## How It Works
 
@@ -33,6 +39,7 @@ QueworkWatch/
 - **chokidar** — watches folder for new files (ignores temp files, partial downloads)
 - **axios** — uploads to Quework API via Sanctum token auth
 - **keytar** — stores API token in OS keychain (falls back to electron-store)
+- **electron-updater** — background updates from GitHub Releases; installs on quit or from the tray
 
 ## Laravel API Endpoints
 

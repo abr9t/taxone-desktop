@@ -19,6 +19,7 @@ CommonJS throughout (no ESM — `electron-store` v8 requirement).
 | axios | ^1.7.0 | HTTP client for Quework API |
 | keytar | ^7.9.0 | OS keychain for token storage (fallback: electron-store) |
 | xlsx | ^0.18.5 | Excel export for queue data |
+| electron-updater | 6.8.9 (exact) | Background updates from GitHub Releases — see [Releases and auto-update](#releases-and-auto-update) |
 | form-data | (transitive) | Multipart uploads via axios |
 | electron-builder | ^25.0.0 | Build & packaging (dev) |
 | cross-env | ^7.0.3 | Unused since `npm run dev` moved to `scripts/dev.js`; removal tracked in `BACKLOG.md` |
@@ -47,6 +48,24 @@ folders, uploads, both upload paths) is axios in the main process on Node's
 certificate store. The renderers make no network requests. `shell.openExternal`
 hands the browser sign-in to the user's default browser, which uses the
 Windows store.
+
+**Updates are the exception.** electron-updater does not use Node's `https`.
+It fetches `latest.yml`, the blockmaps and the installer through Electron's
+`net` module (Chromium's network stack) on its own `electron-updater` session
+partition, so it trusts the **Windows certificate store** and follows the
+system proxy, like the browser. Neither `NODE_TLS_REJECT_UNAUTHORIZED` nor
+`NODE_EXTRA_CA_CERTS` has any effect on it. Probed on Electron 33.4.11
+against a local HTTPS server with the TEST-ONLY fixtures: the updater's own
+HTTP executor and a full `checkForUpdates()` failed with
+`net::ERR_CERT_AUTHORITY_INVALID` with no variable, with
+`NODE_TLS_REJECT_UNAUTHORIZED=0` and with `NODE_EXTRA_CA_CERTS` pointing at
+the test CA; no request reached the server and Node's `https` was never
+called, while a Node `https` control in the same process obeyed both
+variables. A network that re-signs TLS with a CA pushed to the Windows store
+therefore works for updates even where the API fails. Nothing in `src/`
+touches the Chromium side's verification (the tripwire below flags
+`setCertificateVerifyProc`, `'certificate-error'` and
+`ignore-certificate-errors`).
 
 **One place builds a client.** `uploader.createApiClient(serverUrl, token)`:
 - runs the host through `validateServerUrl()` on every build and throws
@@ -721,6 +740,7 @@ Used by `main.js` for app-level flags.
 |-----|------|---------|---------|
 | `hasLaunched` | boolean | `undefined` | Set on first launch after enabling auto-start |
 | `hasClosedUploadWindow` | boolean | `undefined` | Set after first File Upload window close (tray notification shown once) |
+| `lastLaunchedVersion` | string | `undefined` | Version of the previous packaged launch. Differs (or is missing) on the first launch of a version — that session does not check for updates before the 6-hour tick |
 
 ### Settings store (`taxone-settings`)
 
@@ -802,6 +822,8 @@ Used by `MigrationQueue` class.
 | Open Watch Folder | When watch path exists |
 | N file(s) pending | When pending watch files > 0 |
 | Settings... | Always |
+| **Restart to Update (x.y.z)** | An update is downloaded and still offered — installs silently and relaunches, unless something is uploading or waiting (then a dialog says what) |
+| Check for Updates | Packaged builds — checks now and reports the result in a notification (greyed out as *Checking for Updates...* while a check runs) |
 | **Sign In** | When `status === 'disconnected'` |
 | **Sign Out** | When `status !== 'disconnected'` — clears token, sends auth-changed, shows login |
 | Quit Quework Desktop | Always |
@@ -825,10 +847,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 
 ### GitHub Actions Release
 
-`.github/workflows/release.yml` — triggered on `v*` tags:
-1. Runs on `windows-latest`
-2. Node.js 20, `npm ci`, `npm run build`
-3. `softprops/action-gh-release@v2` uploads `dist/*.exe` to GitHub Releases
+`.github/workflows/release.yml` — see [Release pipeline](#release-pipeline).
 
 ### Scripts
 
@@ -837,9 +856,189 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | `start` | `electron .` |
 | `dev` | `node scripts/dev.js` — launches Electron with `NODE_ENV=development` and Herd's CA in `NODE_EXTRA_CA_CERTS`; see [TLS](#tls) |
 | `test` | `node test/run-all.js` |
-| `build` | `electron-builder --win` |
-| `build:dir` | `electron-builder --win --dir` |
-| `build:win` | `electron-builder --win` |
+| `build` | `electron-builder --win --publish never` |
+| `build:dir` | `electron-builder --win --dir --publish never` |
+| `build:win` | `electron-builder --win --publish never` |
+
+Every local build passes `--publish never`; only CI publishes (see [Release pipeline](#release-pipeline)).
+
+---
+
+## Releases and auto-update
+
+### Release pipeline
+
+`.github/workflows/release.yml` has two jobs, and a run starts only one of them.
+
+| Job | Trigger | Permissions | What it does |
+|-----|---------|-------------|--------------|
+| `publish` | a pushed `v*` tag | `contents: write` | `npm ci`, `npm test`, then `electron-builder --win --publish always`: builds and uploads `TaxOne-Desktop-Setup.exe`, `TaxOne-Desktop-Setup.exe.blockmap` and `latest.yml` to a **draft** release |
+| `dry-run` | Run workflow (`workflow_dispatch`), any branch | `contents: read` | `npm ci`, `npm test`, `npm run build` (`--publish never`), and uploads the same three files as a workflow artifact kept 7 days. Creates no release |
+
+- **electron-builder is the only uploader.** It writes `latest.yml`, so the sha512 in it and the installer beside it come from one build. Releases up to v1.1.5 were built by electron-builder (which, with no `publish:` block, found the repo from `.git/config` and uploaded to its own draft) and then `softprops/action-gh-release`, which found that draft, uploaded the exe again and published it. v1.1.2 shows both: `TaxOne-Desktop-Setup-1.1.2.exe` from electron-builder and `TaxOne.Desktop.Setup.1.1.2.exe` from softprops, in one release. The second uploader is gone, and the `publish:` block in `electron-builder.yml` names the repo explicitly.
+- **A draft reaches nobody.** electron-updater (via `github.com/abr9t/taxone-desktop/releases/latest`) and the web download link (`releases/latest/download/TaxOne-Desktop-Setup.exe`) only see published releases. Publishing the draft by hand is the moment every installed app starts downloading it.
+- **Release candidates come from the dry run.** Run the workflow on the branch, download the artifact, and test that installer (UPGRADE-TEST.md) before tagging. The tag build is a fresh build of the same commit, not the same bytes; its `latest.yml` matches its own installer.
+- **Least privilege.** Top-level `permissions: {}`; only the `publish` job can write, and only its publish step is given the token. Actions are pinned by commit SHA. `actions/checkout` runs with `persist-credentials: false`, so nothing that runs during `npm ci` finds a token in `.git/config`.
+- **A local build never publishes.** Every `npm run build*` script passes `--publish never` (electron-builder otherwise publishes on its own when it sees a CI tag, and always from an npm script named `release`).
+- `test/release-config.test.js` checks all of the above, and that each check can fail.
+
+### What the app does
+
+`src/updater.js`, started by `startUpdates()` in `main.js` right after the tray
+and **before** the stored-host check: `resolveStartup()` returns early to the
+sign-in window for a rejected host, and a signed-out install is exactly the one
+a fixed release may be for. Updates go to GitHub and send no token. Unpackaged
+builds (`npm start`, `npm run dev`) do not start it. `startUpdates()` itself
+only records `lastLaunchedVersion`; electron-updater (about 100 ms to load and
+construct) is required on the next turn of the event loop (`setImmediate`), so
+it never delays the host check. `startup-gating.test.js` checks the order:
+tray, `startUpdates()`, the host check, then the electron-updater load.
+
+- **Configuration** (`configureUpdater`): `autoDownload: true`,
+  `autoInstallOnAppQuit: true`, `disableWebInstaller: true`,
+  `allowPrerelease: false`, `allowDowngrade: false`. `channel` is **never**
+  assigned: electron-updater's `channel` setter silently sets
+  `allowDowngrade = true`. `allowPrerelease` is set explicitly because
+  electron-updater turns it on for any build whose own version has a
+  prerelease tag (`1.3.0-beta.1`). `test/updater.test.js` pins all of this on
+  the real `NsisUpdater`.
+- **When it checks:** 5 minutes after launch, then every 6 hours, plus *Check
+  for Updates* in the tray. On the **first launch of a version** (a fresh
+  install, or the first run after any upgrade — `lastLaunchedVersion` differs
+  or is missing) there is no 5-minute check, so first sign-in and the first
+  look at a new version are not interrupted. The manual item still works.
+- **Download:** silent, in the background, to
+  `%LOCALAPPDATA%\taxone-desktop-updater` (from `updaterCacheDirName` in
+  `app-update.yml`, not `userData`). Differential via the blockmaps when the
+  previous release's blockmap is still published, otherwise the full ~85 MB
+  installer. When it completes: one notification per version, and *Restart to
+  Update (x.y.z)* appears in the tray.
+- **Install:** never on the app's own initiative.
+  - **On quit** (tray *Quit*): silent install, the app is not relaunched. Not
+    gated — quitting is the user's call and an install relaunches nothing.
+    Windows shutdown or logoff does **not** install: Electron does not emit
+    `quit` then, and the installer is started from `quit`.
+  - ***Restart to Update***: `quitAndInstall(true, true)` — silent, then the new
+    version starts — only if `restartBlockers()` (`src/update-policy.js`)
+    finds nothing in flight: a file uploading, the queue's throttle/back-off
+    slot, **any pending file, paused included** (`autoResume()` ignores a saved
+    pause, so a restart would un-pause it), an unconfirmed watch-folder file
+    (in memory only — a restart drops it) or a confirm-window upload. A queue
+    that cannot be read blocks. Otherwise a dialog names what is in flight
+    and the update stays ready. The queue's `running` status is deliberately
+    not a rule. `MigrationQueue` loads its persisted status at construction
+    (`migration.js:94`), and a quit or crash mid-run leaves `running` saved.
+    On the next launch `autoResume()` calls `start()`, which returns early
+    because the status already says running (`migration.js:341`), so
+    `_processNext()` never runs and nothing uploads. `start()` cannot clear
+    it; only `pause()` (to paused) or `clearQueue()` (to idle) does. Gating on
+    it would refuse every restart on that install until the user pauses or
+    clears the queue. (If pending files
+    are left in that stuck queue, the pending rule refuses anyway — see
+    `BACKLOG.md`.)
+- **Never throws, never rejects unhandled.** Every check resolves; the
+  download promise, which rejects on its own, is caught; an `'error'` emit
+  cannot throw; tray, notification and installer failures are logged. If
+  electron-updater cannot even load, `startUpdates()` logs `[updater] Not
+  started` and everything else starts as normal (`startup-gating.test.js`).
+- **Logging:** electron-updater's own logger and the controller both write to
+  `debug.log` with an `[updater]` prefix.
+
+### What is verified, and who can ship an update
+
+Builds are unsigned. electron-updater checks a signature only when
+`app-update.yml` has a `publisherName`, which electron-builder writes only for
+signed builds, so **no signature is checked**. What does hold:
+
+1. TLS (Chromium, Windows store) to `github.com/abr9t/taxone-desktop/releases/latest`
+   — the web endpoint, not the API, which excludes drafts and prereleases —
+   and the `.atom` feed, then `releases/download/<tag>/latest.yml`.
+2. The installer, fetched from GitHub's release-asset host, must match the
+   **sha512 in `latest.yml`**; a mismatch fails with `ERR_CHECKSUM_MISMATCH`
+   and the file is discarded. A differential download is hashed as a whole
+   at the end; a cached download is re-hashed before reuse.
+3. `semver`: only a higher version than the running one (no downgrade).
+4. The installer then runs **silently, as the user**. It carries no
+   Mark-of-the-Web, so SmartScreen does not prompt.
+
+So the sha512 protects against a corrupt or truncated download, **not**
+against a malicious release: whoever can publish one writes both files. That
+is anyone with the `abr9t` account or write access to the repo, any token with
+`contents: write` (including a workflow change merged to master followed by a
+tag push), or **any compromised dependency that runs during `npm ci` or the
+build in CI**, which can alter the installer before `latest.yml` is hashed.
+The draft step means a person has to publish. A network attacker is stopped
+by TLS, unless they have a root in the Windows store, in which case they
+already control the machine.
+
+### Failure modes
+
+| What happens | Result |
+|--------------|--------|
+| Offline, DNS failure, 429, 5xx | Check logged, nothing changes, retried at the next tick |
+| Certificate failure | Same — and a downloaded update is **not** withdrawn |
+| `latest.yml` missing from the release | `ERR_UPDATER_CHANNEL_FILE_NOT_FOUND`, logged, nothing offered |
+| Corrupt or truncated download | `ERR_CHECKSUM_MISMATCH`, file discarded, offered nothing, downloaded again next check |
+| Interrupted download | Written to a `temp-*` file and only renamed after the hash passes |
+| Older version published as latest | Not offered (no downgrade) |
+| Prerelease published | Not offered: `/releases/latest` skips prereleases, and `allowPrerelease` is off |
+| Disk full | Write error logged, temp file removed |
+
+### Kill switch
+
+| Need | How | Effect |
+|------|-----|--------|
+| Pause, keep the release and the web download | Edit `latest.yml` on the release to add `stagingPercentage: 0` (delete the asset, upload the edited one) | Apps that have not downloaded it stop being offered it; apps that have downloaded it **withdraw it** at their next successful check |
+| Withdraw | Mark the release as a **prerelease**, or delete it | `/releases/latest` falls back to the previous release, which is older, so nothing is offered and downloaded copies are withdrawn at the next successful check. **The web download link (`releases/latest/download/TaxOne-Desktop-Setup.exe`) then serves the previous release's installer too** |
+| Already installed | Publish a higher version with the fix | Rollback is not possible by design (no downgrade) |
+
+- **Withdrawal of a downloaded update.** Only a *successful* check that no
+  longer offers the downloaded version sets `autoInstallOnAppQuit = false` and
+  removes *Restart to Update* (`decideAfterCheck()` in `update-policy.js`).
+  Offline, 429, a TLS failure or a missing `latest.yml` never withdraw: an
+  error says nothing about the release. Without this, a withdrawn build still
+  installs at the next quit. Tested in both directions.
+- **Immutable releases must stay off.** With GitHub's *Immutable releases*
+  setting, assets of a published release cannot be changed, so the
+  `stagingPercentage: 0` pause is impossible and only the prerelease/delete
+  route is left. All releases to date report `immutable: false`.
+
+### Install path and userData
+
+An update runs the same NSIS installer with `--updated /S`:
+- `INSTDIR` comes from `HKCU\Software\fb2f6324-7194-5753-aa0e-d1c9da0ecd6e\InstallLocation`,
+  so the existing directory is reused, and the uninstall key is the same
+  (both derive from the unchanged `appId`). The installer is per-user and asks
+  for no elevation.
+- The previous version's uninstaller runs with `/KEEP_APP_DATA --updated`,
+  and `deleteAppDataOnUninstall` is not set, so `%APPDATA%\TaxOne Desktop`
+  is never deleted. The userData pin and the one-time migrations run as on
+  any launch.
+- electron-updater writes one file into `%APPDATA%\TaxOne Desktop`:
+  `.updaterId`, a random id for staged rollouts. It changes nothing else there.
+
+### Code signing — deferred
+
+Signing would make electron-builder write `publisherName`, and electron-updater
+would then refuse an installer not signed by that publisher. That stops a
+GitHub account or release compromise **only if** the signing key is out of
+reach (HSM, Azure Trusted Signing). It does not stop a compromised CI that
+holds the signing credentials, and it does not cover the first signed
+release (installed by an app whose `app-update.yml` has no `publisherName`).
+For one firm and a handful of installs it is deferred; see `BACKLOG.md`.
+
+### Tests
+
+- `test/update-policy.test.js` — each restart blocker alone; withdrawal in both
+  directions.
+- `test/updater.test.js` — the controller on a fake updater and clock; the
+  configuration on the real `NsisUpdater`.
+- `test/startup-gating.test.js` — the real `main.js`: updates start on every
+  launch path, a failing updater costs nothing else, and *Restart to Update*
+  refuses for the real queue, unconfirmed files and confirm-window uploads.
+- `test/release-config.test.js` — the pipeline.
+- End to end, on Windows, against the dry-run release candidate:
+  UPGRADE-TEST.md section 6.
 
 ---
 
@@ -874,6 +1073,10 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 | Dev CA via `NODE_EXTRA_CA_CERTS`, not `rejectUnauthorized: false` | Adds a trust anchor in dev without turning any check off; the launcher lives outside the packaged files |
 | Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `taxone-desktop://` is a protocol anyone can link to. A firm on any other host is signed out on upgrade and cannot sign in until the allowlist is widened (see [Persisted host, checked on read](#persisted-host-checked-on-read)) |
 | Auth-changed event propagation | Single source of truth for auth state across all windows |
+| Updates download silently, never restart on their own | A tray app may be uploading a client's files at any moment; install on quit, or from the tray when `restartBlockers()` finds nothing in flight |
+| Updates start before the host check | A signed-out install (rejected host, no sign-in yet) is exactly the one a fixed release may be for; updates go to GitHub and carry no token |
+| Draft releases, published by hand | The publish click is the one moment every install starts downloading; a candidate is tested from the dry-run artifact first |
+| Only a successful check withdraws a downloaded update | Offline, 429 or a broken feed says nothing about the release; the kill switch must not depend on the network being up, nor fire when it is down |
 
 ---
 
@@ -883,7 +1086,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 taxone-desktop/
 ├── .github/
 │   └── workflows/
-│       └── release.yml           # GitHub Actions: build on tag push, publish to GitHub Releases
+│       └── release.yml           # GitHub Actions: tag → draft release; Run workflow → 7-day release-candidate artifact
 ├── assets/
 │   ├── icon.ico                  # Windows installer icon (NSIS)
 │   ├── icon.png                  # App window icon (256x256)
@@ -894,6 +1097,8 @@ taxone-desktop/
 │   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL allowlist, legacy-host migration, persisted-host check, userData tripwire
 │   ├── startup.js                # resolveStartup — login-or-resume decision, stored host checked before the first request
 │   ├── reconnect.js              # One never-rejecting tick of the 30s reconnect loop
+│   ├── updater.js                # electron-updater wiring: configuration, check schedule, withdrawal, Restart to Update
+│   ├── update-policy.js          # Pure decisions: restart blockers, first launch of a version, keep/withdraw after a check
 │   ├── auto-launch.js            # Run-key reconciliation after the executable rename
 │   ├── debug-log.js              # Shared {userData}debug.log writer (debugLog / debugError)
 │   ├── watcher.js                # chokidar watch folder, file parsing, move-to-Uploaded/Cancelled
@@ -917,14 +1122,18 @@ taxone-desktop/
 │   ├── migrate-legacy-host.test.js   # taxone.cpa -> caputa.quework.app, guard, idempotence
 │   ├── migrate-watch-path.test.js    # ~/TaxoneWatch pinning vs. fresh installs
 │   ├── reconnect.test.js         # The 30s tick never rejects and never retries for a rejected host
-│   ├── startup-gating.test.js    # Real main.js on a fake Electron: a rejected host starts nothing
+│   ├── release-config.test.js    # Publish config, --publish never locally, release.yml permissions/pins/dry run
+│   ├── startup-gating.test.js    # Real main.js on a fake Electron: a rejected host starts nothing but updates; tray update items
 │   ├── tls-tripwire.test.js      # Nothing in src/, scripts/, package.json or electron-builder.yml relaxes certificate verification
 │   ├── tls-verification.test.js  # Local HTTPS server: rejection, env override, dev CA, hostname check, error naming
+│   ├── update-policy.test.js     # Each restart blocker alone; withdrawal in both directions
+│   ├── updater.test.js           # Controller on a fake updater; configuration pinned on the real NsisUpdater
 │   ├── userdata-tripwire.test.js     # Tripwire throws unpackaged, records packaged
 │   ├── validate-server-url.test.js   # Server URL allowlist and its counterfactuals
 │   ├── helpers/                  # Module._load stubs and the TLS child-process client (not suites)
 │   └── fixtures/tls/             # TEST-ONLY CA and leaf certificates (100-year validity) — see its README
-├── electron-builder.yml          # Build config — NSIS, protocol registration, icons, artifactName
+├── .gitleaksignore               # Fingerprints of the TEST-ONLY fixture keys
+├── electron-builder.yml          # Build config — NSIS, protocol registration, icons, artifactName, publish (GitHub draft)
 ├── package.json                  # Dependencies & scripts
 ├── UPGRADE-TEST.md               # Manual upgrade checklist — the merge gate for v1.2.0
 └── ARCHITECTURE.md               # This file
