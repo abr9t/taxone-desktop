@@ -853,6 +853,7 @@ $installMark = Get-LogMark
 2. The install is per-user and its updater started quietly:
 
 ```powershell
+if ($null -eq $installMark) { throw 'STOP: run 6.4 step 1 first' }
 $k = Get-ItemProperty -LiteralPath $un -ErrorAction SilentlyContinue
 $dir = (Get-ItemProperty -LiteralPath $inst -ErrorAction SilentlyContinue).InstallLocation
 if ($k.DisplayName -eq 'Quework Desktop 1.2.0') { 'PASS: HKCU uninstall entry is Quework Desktop 1.2.0' } else { "FAIL: HKCU uninstall entry is '$($k.DisplayName)'" }
@@ -1034,7 +1035,8 @@ $before = @{
     TopLevel        = @(Get-ChildItem -LiteralPath $ud -Force | ForEach-Object { $_.Name })
     Stores          = Get-StoreSnapshot
 }
-if (-not $before.Stores.ContainsKey('taxone-settings.json')) { throw "STOP: no taxone-settings.json in $ud; this is not the install to test" }
+$ts = $before.Stores['taxone-settings.json']
+if ($null -eq $ts -or $ts.Count -eq 0 -or -not $ts.ContainsKey('serverUrl')) { throw "STOP: taxone-settings.json in $ud is missing, empty or has no serverUrl; this is not the install to test" }
 "InstallLocation: $($before.InstallLocation)"
 "top-level entries in userData: $($before.TopLevel.Count)"
 $mark = Get-LogMark
@@ -1085,7 +1087,9 @@ which Electron rewrites on every launch, update or not. `config.json`'s
 ran against this folder.
 
 ```powershell
-if (-not $before -or -not $before.Stores -or -not $before.Stores.ContainsKey('taxone-settings.json')) { throw 'STOP: the 6.8 snapshot is missing or has no taxone-settings.json; nothing to compare against' }
+if ($null -eq $before -or $null -eq $before.Stores) { throw 'STOP: no 6.8 snapshot in this window; nothing to compare against' }
+$ts = $before.Stores['taxone-settings.json']
+if ($null -eq $ts -or $ts.Count -eq 0 -or -not $ts.ContainsKey('serverUrl')) { throw 'STOP: the 6.8 snapshot has no taxone-settings.json with a serverUrl; nothing to compare against' }
 $after = Get-StoreSnapshot
 $fail = 0
 foreach ($file in $before.Stores.Keys) {
@@ -1116,6 +1120,7 @@ minutes after a launch that is not a first launch). Then:
 ```powershell
 $main = Get-Process 'Quework Desktop' -ErrorAction SilentlyContinue | Sort-Object StartTime | Select-Object -First 1
 if (-not $main -or ((Get-Date) - $main.StartTime).TotalMinutes -lt 6) { throw 'STOP: run 6.10 after 6 minutes' }
+if ((Get-RunningVersion) -ne '1.2.1') { throw 'STOP: 1.2.1 is not the running version' }
 $lines = @(Get-Content -LiteralPath $log)
 $at = -1
 for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '\[updater\] Started for 1\.2\.1') { $at = $i } }
