@@ -128,8 +128,11 @@ const TAG_CHECK = 'test "$GITHUB_REF_NAME" = "v$(node -p "require(\'./package.js
 // A step that builds the installer.
 const BUILDS = /electron-builder|npm run build|npm run dist/;
 
-// A secret or the job token, written into a workflow.
-const SECRET = /\$\{\{\s*(secrets\.|github\.token\b)/;
+// Anything that can reach a secret or the job token: secrets.X,
+// secrets['X'], toJSON(secrets), github.token, github['token'].
+const SECRET = /\bsecrets\b|github\.token|github\[/;
+// The one place a secret may appear: the publishing step's env, exactly this.
+const PUBLISH_TOKEN_ENV = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' };
 
 // `on:` may be a string, a list or a map; these are the event names.
 function triggers(on) {
@@ -191,14 +194,30 @@ function workflowProblems(wf) {
     if (publishing.length !== 1 || publishing[0].job !== 'publish') problems.push('exactly one step, in the publish job, may publish');
     else if (!/github\.ref_type == 'tag'/.test(publishing[0].if || '')) problems.push('the publish step does not check ref_type == tag itself');
 
-    // Secrets reach exactly one step. Workflow- or job-level env would hand
-    // them to every step under it, npm ci included.
-    if (SECRET.test(JSON.stringify(wf.env || {}))) problems.push('workflow-level env hands out a secret');
+    // Secrets reach exactly one place: GH_TOKEN in the publishing step's
+    // env. Scanned, as JSON: every other step whole (name, run, env, with,
+    // if), the publishing step without its env, each job without its steps
+    // (env, container and services credentials, ...), and the workflow
+    // without its jobs.
+    const { jobs: _jobs, ...workflowRest } = wf;
+    if (SECRET.test(JSON.stringify(workflowRest))) problems.push('the workflow, outside its jobs, names a secret or the job token');
     for (const [name, j] of Object.entries(jobs)) {
-        if (SECRET.test(JSON.stringify(j.env || {}))) problems.push(`job-level env of ${name} hands out a secret`);
+        const { steps: _steps, ...jobRest } = j;
+        if (SECRET.test(JSON.stringify(jobRest))) problems.push(`job ${name}, outside its steps, names a secret or the job token`);
     }
-    const tokenSteps = steps.filter(s => SECRET.test(JSON.stringify(s.env || {}) + JSON.stringify(s.with || {})));
-    if (tokenSteps.some(s => s !== publishing[0])) problems.push('a step other than the publish step is handed a secret');
+    const publisher = publishing.length === 1 ? publishing[0] : null;
+    for (const st of steps) {
+        if (st === publisher) {
+            const { env, ...rest } = st;
+            if (SECRET.test(JSON.stringify(rest))) problems.push('the publish step names a secret or the job token outside its env');
+            const secretEnv = Object.fromEntries(Object.entries(env || {}).filter(([k, v]) => SECRET.test(`${k} ${JSON.stringify(v)}`)));
+            if (JSON.stringify(secretEnv) !== JSON.stringify(PUBLISH_TOKEN_ENV)) {
+                problems.push(`the publish step's env must hand out exactly GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}, has: ${Object.keys(secretEnv).join(', ') || 'none'}`);
+            }
+        } else if (SECRET.test(JSON.stringify(st))) {
+            problems.push(`a step in ${st.job} names a secret or the job token: ${st.name || st.uses || String(st.run).split('\n')[0]}`);
+        }
+    }
 
     for (const s of steps.filter(x => x.uses)) {
         if (!/@[0-9a-f]{40}$/.test(s.uses)) problems.push(`${s.uses} is not pinned to a commit SHA`);
@@ -255,6 +274,23 @@ function workflowProblems(wf) {
         ['GH_TOKEN in publish job env', wf => { wf.jobs.publish.env = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }; }],
         ['GH_TOKEN in workflow env', wf => { wf.env = { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }; }],
         ['github.token in a dry-run step', wf => { step(wf, 'dry-run', /npm run build/).env = { T: '${{ github.token }}' }; }],
+        ['secrets. in a run line (curl)', wf => {
+            step(wf, 'dry-run', /npm run build/).run = 'curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/user';
+        }],
+        ['secrets. in a run line (npm ci)', wf => { step(wf, 'publish', /^npm ci$/).run = 'NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }} npm ci'; }],
+        ["secrets['GITHUB_TOKEN']", wf => { step(wf, 'dry-run', /npm run build/).env = { T: "${{ secrets['GITHUB_TOKEN'] }}" }; }],
+        ['toJSON(secrets)', wf => { step(wf, 'dry-run', /npm run build/).run = "echo '${{ toJSON(secrets) }}' > s.json"; }],
+        ["github['token']", wf => { step(wf, 'dry-run', /npm run build/).env = { T: "${{ github['token'] }}" }; }],
+        ['dry-run container credentials', wf => {
+            wf.jobs['dry-run'].container = { image: 'node:20', credentials: { username: 'x', password: '${{ secrets.GITHUB_TOKEN }}' } };
+        }],
+        ['a secret in a step name', wf => { step(wf, 'dry-run', /npm run build/).name = 'Build ${{ secrets.GITHUB_TOKEN }}'; }],
+        ['a secret in the publish step run line', wf => {
+            const st = step(wf, 'publish', /electron-builder/);
+            st.run = `${st.run} --config.publish.token=\${{ secrets.GITHUB_TOKEN }}`;
+        }],
+        ['a second secret in the publish step env', wf => { step(wf, 'publish', /electron-builder/).env.NPM_TOKEN = '${{ secrets.NPM_TOKEN }}'; }],
+        ['GH_TOKEN taken from another secret', wf => { step(wf, 'publish', /electron-builder/).env.GH_TOKEN = '${{ secrets.PAT }}'; }],
         ['tests skipped before publishing', wf => { wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.run !== 'npm test'); }],
         ['no tag/version check', wf => { wf.jobs.publish.steps = wf.jobs.publish.steps.filter(s => s.run !== TAG_CHECK); }],
         ['the tag check after the build', wf => {
@@ -304,6 +340,7 @@ function workflowProblems(wf) {
     }
     ok('release.yml: the tag check cannot be disarmed (no if, continue-on-error or env on it; no GITHUB_REF_NAME above it)');
     ok('release.yml: triggered only by push and workflow_dispatch; no secret in workflow- or job-level env');
+    ok("release.yml: no secret or job token anywhere but GH_TOKEN in the publish step's env (run lines, names, bracket forms, toJSON, container credentials included)");
 }
 
 console.log('');
