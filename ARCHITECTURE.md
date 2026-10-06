@@ -930,8 +930,10 @@ tray, `startUpdates()`, the host check, then the electron-updater load.
     (`migration.js:94`), and a quit or crash mid-run leaves `running` saved.
     On the next launch `autoResume()` calls `start()`, which returns early
     because the status already says running (`migration.js:341`), so
-    `_processNext()` never runs, nothing uploads and the status never clears.
-    Gating on it would refuse every restart on that install. (If pending files
+    `_processNext()` never runs and nothing uploads. `start()` cannot clear
+    it; only `pause()` (to paused) or `clearQueue()` (to idle) does. Gating on
+    it would refuse every restart on that install until the user pauses or
+    clears the queue. (If pending files
     are left in that stuck queue, the pending rule refuses anyway — see
     `BACKLOG.md`.)
 - **Never throws, never rejects unhandled.** Every check resolves; the

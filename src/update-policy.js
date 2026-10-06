@@ -49,11 +49,12 @@ function restartBlockers({ queue, unconfirmedFiles = 0, directUploads = 0 }) {
         // its persisted status at construction (migration.js:94), and a quit
         // or crash mid-run leaves 'running' saved. On the next launch
         // autoResume() calls start(), which returns early because the status
-        // already says running (migration.js:341): _processNext() never runs,
-        // nothing uploads, and the flag stays set for good. Gating on it would
-        // refuse every restart on that install. The three counts above are
-        // the work. (BACKLOG.md: reset a persisted 'running' in the
-        // constructor.)
+        // already says running (migration.js:341): _processNext() never runs
+        // and nothing uploads. start() cannot clear it; only pause() (to
+        // paused) or clearQueue() (to idle) does. Gating on it would refuse
+        // every restart on that install until the user pauses or clears the
+        // queue. The three counts above are the work. (BACKLOG.md: reset a
+        // persisted 'running' in the constructor.)
     }
 
     if (unconfirmedFiles > 0) {

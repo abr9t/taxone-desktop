@@ -37,9 +37,9 @@ function queue(stats = {}, activeUploads = 0) {
 }
 
 {
-    // A persisted 'running' status is loaded at construction and, because
-    // start() then returns early, never cleared (migration.js:94 and :341).
-    // With no work behind it, it must not block the restart forever.
+    // A persisted 'running' status is loaded at construction, and start()
+    // returns early on it (migration.js:94 and :341), so it stays until a
+    // pause() or clearQueue(). With no work behind it, it must not block.
     assert.deepStrictEqual(restartBlockers({ queue: queue({ queueStatus: 'running' }) }), []);
     ok("a stale 'running' flag with nothing pending or uploading does not block");
 }
@@ -81,8 +81,9 @@ for (const [name, state, why] of ALONE) {
 // described: the status saved by a quit or crash mid-run is loaded at
 // construction (migration.js:94), and autoResume() -> start() returns early
 // because it already says running (migration.js:341). Nothing processes, and
-// the status never clears. This pins today's behaviour; the BACKLOG fix
-// (reset a persisted 'running' in the constructor) will have to update it.
+// start() cannot clear it; pause() or clearQueue() can. This pins today's
+// behaviour; the BACKLOG fix (reset a persisted 'running' in the
+// constructor) will have to update it.
 
 async function persistedRunning(files) {
     const { installStubs } = require('./helpers/stubs');
@@ -119,6 +120,26 @@ async function realQueueCases() {
         const reasons = restartBlockers({ queue: q });
         assert.deepStrictEqual(reasons, ['1 file(s) waiting in the upload queue'], JSON.stringify(reasons));
         ok("real queue: a pending file stranded by a persisted 'running' blocks the restart (BACKLOG: reset it at construction)");
+    }
+    {
+        // What does clear it: pause(), after which start() works again.
+        const { q, uploads } = await persistedRunning([entry('a', 'pending')]);
+        q.pause();
+        assert.strictEqual(q.status, 'paused', "pause() replaces the persisted 'running'");
+        q.start();
+        await new Promise(r => setTimeout(r, 700));
+        assert.strictEqual(uploads.length, 1, 'start() now runs, and the stranded file uploads');
+        assert.strictEqual(q.status, 'idle');
+        assert.deepStrictEqual(restartBlockers({ queue: q }), []);
+        ok("real queue: pause() clears a persisted 'running'; start() then uploads the stranded file and the restart is allowed");
+    }
+    {
+        // ...or clearQueue().
+        const { q } = await persistedRunning([entry('a', 'pending')]);
+        q.clearQueue();
+        assert.strictEqual(q.status, 'idle', "clearQueue() replaces the persisted 'running'");
+        assert.deepStrictEqual(restartBlockers({ queue: q }), []);
+        ok("real queue: clearQueue() clears a persisted 'running' too");
     }
 }
 
