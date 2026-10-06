@@ -125,6 +125,9 @@ function localScriptProblems(p) {
 // report.
 const TAG_CHECK = 'test "$GITHUB_REF_NAME" = "v$(node -p "require(\'./package.json\').version")"';
 
+// A step that builds the installer.
+const BUILDS = /electron-builder|npm run build|npm run dist/;
+
 // A secret or the job token, written into a workflow.
 const SECRET = /\$\{\{\s*(secrets\.|github\.token\b)/;
 
@@ -162,7 +165,9 @@ function workflowProblems(wf) {
 
     const publishSteps = publish.steps || [];
     const tagCheck = publishSteps.findIndex(s => s.run === TAG_CHECK);
-    const build = publishSteps.findIndex(s => /electron-builder/.test(s.run || ''));
+    // The first step that builds, however it is spelled; the check must come
+    // before it.
+    const build = publishSteps.findIndex(s => BUILDS.test(s.run || ''));
     if (tagCheck === -1) {
         problems.push('the publish job does not check the tag against package.json');
     } else {
@@ -256,6 +261,14 @@ function workflowProblems(wf) {
             const steps = wf.jobs.publish.steps;
             const check = steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 1)[0];
             steps.push(check);
+        }],
+        ['an npm run build step before the tag check', wf => {
+            const steps = wf.jobs.publish.steps;
+            steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'npm run build' });
+        }],
+        ['an npm run dist step before the tag check', wf => {
+            const steps = wf.jobs.publish.steps;
+            steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'npm run dist' });
         }],
         ['the tag check in pwsh', wf => { delete step(wf, 'publish', /GITHUB_REF_NAME/).shell; }],
         ['a weakened tag check', wf => { step(wf, 'publish', /GITHUB_REF_NAME/).run = 'test -n "$GITHUB_REF_NAME"'; }],
