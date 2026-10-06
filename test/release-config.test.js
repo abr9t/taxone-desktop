@@ -138,8 +138,10 @@ const EOL_DIAGNOSTIC = {
         + 'git ls-files --eol -- src/main.js .github/workflows/release.yml test/fixtures/tls/ca.crt\n',
 };
 
-// A step that builds the installer.
-const BUILDS = /electron-builder|npm run build|npm run dist/;
+// A step that builds the installer, however it is invoked: electron-builder
+// (npx included), npm/yarn build scripts, any pnpm command, or node running
+// a path with "build" in it.
+const BUILDS = /electron-builder|npm run build|npm run dist|yarn build|pnpm|node\s+\S*build/;
 
 // Anything that can reach a secret or the job token: secrets.X,
 // secrets['X'], toJSON(secrets), github.token, github['token'], in any case
@@ -321,6 +323,22 @@ function workflowProblems(wf) {
         ['an npm run build step before the tag check', wf => {
             const steps = wf.jobs.publish.steps;
             steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'npm run build' });
+        }],
+        ['a yarn build step before the tag check', wf => {
+            const steps = wf.jobs.publish.steps;
+            steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'yarn build' });
+        }],
+        ['a pnpm build step before the tag check', wf => {
+            const steps = wf.jobs.publish.steps;
+            steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'pnpm run build' });
+        }],
+        ['an npx electron-builder step before the tag check', wf => {
+            const steps = wf.jobs.publish.steps;
+            steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'npx electron-builder --win --publish never' });
+        }],
+        ['a node build script before the tag check', wf => {
+            const steps = wf.jobs.publish.steps;
+            steps.splice(steps.findIndex(s => s.run === TAG_CHECK), 0, { run: 'node scripts/build.js' });
         }],
         ['an npm run dist step before the tag check', wf => {
             const steps = wf.jobs.publish.steps;
