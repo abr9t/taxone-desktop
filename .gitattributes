@@ -1,0 +1,11 @@
+# Line endings. The repository stores text with LF. These types are also
+# checked out with LF on every machine, whatever core.autocrlf says, so a
+# Windows checkout tests and packages the same bytes as the commit
+# (test/line-endings.test.js). Everything else is left to Git: text=auto
+# keeps binaries (icons, images) binary.
+* text=auto
+*.js text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.html text eol=lf
