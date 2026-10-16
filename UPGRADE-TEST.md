@@ -743,10 +743,12 @@ Expected: exactly `latest.yml`, `TaxOne-Desktop-Setup.exe` and
 ### 6.2 Build the throwaway 1.2.1 from the same commit
 
 Same commit, only the version changed, in a clean export — never in your
-working copy. Set `$repo` to your clone first.
+working copy. Set `$repo` to the full path of your own clone; the value
+below is only a placeholder.
 
 ```powershell
-$repo = "$env:USERPROFILE\PhpstormProjects\taxone-desktop"
+$repo = 'PASTE-THE-FULL-PATH-TO-YOUR-CLONE'
+if (-not (Test-Path -LiteralPath "$repo\.git")) { throw 'STOP: set $repo to your clone (the folder that contains .git)' }
 $src  = "$root\build-1.2.1"
 $upd  = "$root\v1.2.1"
 git -C $repo fetch origin
@@ -910,7 +912,11 @@ if ($mismatch.Count -ge 1 -and $ready.Count -eq 0) { 'PASS: the installer was re
 
 ### 6.6 A pending queue file makes the restart refuse
 
-The queue only holds a file *pending* while it cannot upload it, so this
+The queue only holds a file *pending* while it cannot upload it, Two rules for this section. Paste each block **whole**, never line by line:
+the `throw` guards only stop what follows them when the block runs as one
+piece. And edit `migration-queue.json` only while the app is **quit**: a
+running app holds the queue in memory and writes it back over your edit when
+it exits, so this
 step runs **offline**, with one throwaway file added to the queue for client
 id `0` (no such client — if it ever reached the server it would be refused,
 not filed). The real `migration-queue.json` is backed up first and restored
@@ -946,14 +952,13 @@ $q.status = 'paused'
    server still answers. Confirm:
 
 ```powershell
-$online = $true
-try {
-    $null = Invoke-WebRequest -Uri 'https://caputa.quework.app' -UseBasicParsing -TimeoutSec 10
-} catch {
-    $online = [bool]$_.Exception.Response
-}
-if ($online) { 'STOP: caputa.quework.app answered; this machine is still online' } else { 'PASS: offline' }
+$reach = Test-NetConnection -ComputerName 'caputa.quework.app' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue
+if ($reach) { 'STOP: port 443 on caputa.quework.app is reachable; this machine is still online' } else { 'PASS: offline' }
+
 ```
+A refused upload with an HTTP status (such as 422) means the server was
+reached, so the machine was online; a real offline failure is a network
+error such as ECONNRESET or ENOTFOUND.
 
 3. Start Quework Desktop. It resumes the queue (it ignores a saved pause) and
    the test file starts failing to upload and retrying.
@@ -1125,7 +1130,7 @@ $lines = @(Get-Content -LiteralPath $log)
 $at = -1
 for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '\[updater\] Started for 1\.2\.1') { $at = $i } }
 if ($at -lt 0) { 'FAIL: no "Started for 1.2.1" line' } else {
-    $since = @($lines | Select-Object -Skip $at)
+    $since = @($lines | Select-Object -Skip ([Math]::Max(0, $at - 3)))
     if (@($since | Where-Object { $_ -match '\[updater\] First launch of this version' }).Count -ge 1) { 'PASS: 1.2.1 knows it is a first launch' } else { 'FAIL: no "First launch of this version" line' }
     $checks = @($since | Where-Object { $_ -match 'Checking for update' })
     if ($checks.Count -eq 0) { 'PASS: no update check since 1.2.1 started' } else { "FAIL: $($checks.Count) check(s) since 1.2.1 started" }
@@ -1165,14 +1170,54 @@ if (@($q.files | Where-Object { $_.id -eq 'update-test-0001' }).Count -eq 0) { '
 
 If every check in 6.1–6.11 passed, the release candidate can be tagged.
 
-### 6.12 After the real release is published (not a gate)
+### 6.11a Tag, then verify the draft before you publish it
 
-On a machine running the published 1.2.0: tray → **Check for Updates**.
-The notification says *Quework Desktop 1.2.0 is up to date*, and:
+Tag the exact commit that was tested, not whatever `master` has become:
 
 ```powershell
-$hit = @(Get-Content -LiteralPath $log | Where-Object { $_ -match '\[updater\] Update for version 1\.2\.0 is not available \(latest version: 1\.2\.0' })
+git fetch origin
+git rev-parse $sha
+git show "${sha}:package.json" | Select-String '"version"'
+git tag -a v1.2.0 $sha -m "Quework Desktop 1.2.0"
+git push origin v1.2.0
+```
+
+When the `publish` run is green, the Releases page shows one **draft** with
+three assets. The CI build is a rebuild of the same commit, so it is **not**
+byte-identical to the dry-run candidate (NSIS embeds timestamps). The dry-run
+proves the update mechanism; this step proves the file you are about to
+publish. Download all three assets into a scratch folder, then:
+
+```powershell
+$d = "$env:USERPROFILE\Downloads\draft-check"
+Get-ChildItem -LiteralPath $d | ForEach-Object { "  $($_.Name)  $($_.Length)" }
+Test-ReleaseFolder $d '1.2.0'
+if (Select-String -LiteralPath "$d\latest.yml" -Pattern 'stagingPercentage') { 'FAIL: stagingPercentage present' } else { 'PASS: no stagingPercentage' }
+```
+
+Expected: exactly the three files, four PASS lines and `PASS: no stagingPercentage`.
+Publish only then, with **Latest** selected and not Pre-release.
+
+
+
+
+### 6.12 After the real release is published (not a gate)
+
+On a machine running the published 1.2.0, take a log mark, then tray →
+**Check for Updates**:
+
+```powershell
+if ((Get-RunningVersion) -ne '1.2.0') { throw 'STOP: the running version is not 1.2.0' }
+$mark = Get-LogMark
+```
+
+The notification says *Quework Desktop 1.2.0 is up to date*. Wait about ten
+seconds, then:
+
+```powershell
+$hit = @(Get-NewLogLines $mark | Where-Object { $_ -match '\[updater\] Update for version 1\.2\.0 is not available \(latest version: 1\.2\.0' })
 if ($hit.Count -ge 1) { 'PASS: the GitHub leg works (TLS, /releases/latest, latest.yml)' } else { 'FAIL: no answer from GitHub; look for "[updater]" lines in debug.log' }
+```
 ```
 
 That is the first proof of the GitHub leg. The first real update (1.2.0 →
