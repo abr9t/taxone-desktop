@@ -103,3 +103,14 @@
   to install" inside a dialog that says the app "will not restart while
   files are uploading or waiting". Say that the update was withdrawn
   instead.
+- Going private needs a new update feed first. Installed apps read app-update.yml
+  with provider: github and no token, so a private repo would silently stop all updates
+  and break the web app’s /download/ redirect. Before going private, move releases to our 
+  own host (for example Cloudflare R2 behind a custom domain such as downloads.quework.app) 
+  and ship a version whose app-update.yml points there.
+- Intune detection must be by existence, never by version. Detect on the HKCU uninstall 
+  key fb2f6324-7194-5753-aa0e-d1c9da0ecd6e. The app updates itself, so a version rule would 
+  make Intune reinstall 1.2.0 over newer builds.
+- Test-doc hygiene. UPGRADE-TEST.md checks should not be able to print PASS when a step silently
+  didn’t run. The old web-request offline check passed while the machine was online (fixed in this PR
+  with Test-NetConnection). Review the remaining PASS lines for the same flaw.
