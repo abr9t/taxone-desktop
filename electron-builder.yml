@@ -10,9 +10,11 @@ files:
   - node_modules/**/*
   - package.json
 
-# IDENTIFIERS, not branding: one HKCU\Software\Classes\<scheme> key each.
-# quework-desktop is the current name; taxone-desktop stays so existing links
-# and older web builds keep opening the app. See src/protocol.js.
+# macOS / Linux / AppX only: electron-builder's NSIS target ignores this key,
+# so on Windows the schemes are registered by main.js at every launch
+# (app.setAsDefaultProtocolClient), never by the installer. Kept equal to
+# src/protocol.js (test/protocol.test.js). quework-desktop is the current
+# name; taxone-desktop stays so existing links and older web builds work.
 protocols:
   - name: Quework Desktop
     schemes:

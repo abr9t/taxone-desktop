@@ -11,10 +11,14 @@
 //                        emitted quework-desktop:// for a full release cycle
 //                        and no install older than v1.3.0 is left.
 //
-// Both are IDENTIFIERS, not branding: electron-builder.yml writes one
-// HKCU\Software\Classes\<scheme> key per entry at install, and main.js
-// re-registers both at every launch. Removing one makes every link that uses
-// it do nothing, with no error.
+// Both are IDENTIFIERS, not branding. On Windows the only thing that
+// registers them is main.js, at every launch (app.setAsDefaultProtocolClient
+// writes HKCU\Software\Classes\<scheme>); the NSIS installer writes no
+// protocol key, and the uninstaller removes none. So a new install answers
+// neither scheme until the app has run once, and an upgrade answers the new
+// one from its first launch (auto-update relaunches the app). The `protocols`
+// list in electron-builder.yml is for the macOS / Linux targets only. Removing
+// a scheme here makes every link that uses it do nothing, with no error.
 //
 // A scheme is a protocol anyone can put behind a link. Accepting a second one
 // adds a second way in, not a second set of rules: every URL either scheme

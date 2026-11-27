@@ -1232,7 +1232,8 @@ v1.3.0 registers `quework-desktop://` beside `taxone-desktop://`. Run this on
 a machine upgraded from v1.2.0 (the auto-update, or the installer run over it).
 
 - [ ] **Both schemes are registered, to the same exe.** Launch the upgraded
-      app once, then:
+      app once (the app registers them at launch; the installer does not),
+      then run the script below.
 
 ```powershell
 foreach ($s in 'quework-desktop', 'taxone-desktop') {
@@ -1243,7 +1244,8 @@ foreach ($s in 'quework-desktop', 'taxone-desktop') {
 }
 ```
 
-      Expected: two PASS lines naming the same `Quework Desktop.exe`.
+Expected: two PASS lines naming the same `Quework Desktop.exe`.
+
 - [ ] **New scheme, with the app running.** Win+R:
       `quework-desktop://connect?url=https://caputa.quework.app`
       → the File Upload window comes to the front (signed in), no dialog.

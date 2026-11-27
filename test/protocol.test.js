@@ -46,13 +46,13 @@ assert.strictEqual(protocol.findProtocolUrl(['Quework Desktop.exe', '--flag']), 
 assert.strictEqual(protocol.findProtocolUrl(undefined), undefined);
 ok('findProtocolUrl returns the first deep link in a command line, or undefined');
 
-// The installer writes one HKCU\Software\Classes key per scheme listed here.
-// A scheme the app handles but the installer does not register only works
-// after the app has run once; one the installer registers but the app does
-// not handle opens the app and does nothing.
+// electron-builder's `protocols` key is read by the macOS, Linux and AppX
+// targets only; the NSIS (Windows) installer ignores it, and on Windows
+// main.js registers the schemes at launch. This keeps the list in step for
+// the other targets, so a future mac/Linux build cannot drift from the app.
 const builder = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'electron-builder.yml'), 'utf8'));
 const installed = (builder.protocols || []).flatMap(p => p.schemes || []);
 assert.deepStrictEqual(installed, [...protocol.PROTOCOL_SCHEMES]);
-ok('electron-builder.yml registers exactly the schemes src/protocol.js handles');
+ok('electron-builder.yml protocols (macOS/Linux targets) list exactly the schemes src/protocol.js handles');
 
 console.log(`\n${passed} passed`);

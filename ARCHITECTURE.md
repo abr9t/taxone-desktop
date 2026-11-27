@@ -518,11 +518,22 @@ build error and no failing test.
 ### Deep-link schemes
 
 The app answers `quework-desktop://` (since v1.3.0) and `taxone-desktop://`
-(the original name), with the same handler. Both are identifiers:
-`electron-builder.yml` writes one `HKCU\Software\Classes\<scheme>` key per
-scheme at install, `main.js` re-registers both at every launch, and
-`src/protocol.js` owns the list. `test/protocol.test.js` fails if the installer
-and the app disagree.
+(the original name), with the same handler. Both are identifiers, and
+`src/protocol.js` owns the list.
+
+**On Windows only the running app registers them.** `main.js` calls
+`app.setAsDefaultProtocolClient()` for each at every launch, which writes
+`HKCU\Software\Classes\<scheme>`. electron-builder's NSIS target ignores the
+`protocols` key (it is read by the macOS, Linux and AppX targets only), so the
+installer writes no protocol key and the uninstaller removes none. A fresh
+install answers neither scheme until the app has run once; an upgrade answers
+`quework-desktop://` from its first launch, and auto-update relaunches the
+app. `test/protocol.test.js` keeps the `protocols` list equal to
+`src/protocol.js` for the other targets.
+
+**A link only works while the app is running.** A link that launches a closed
+app starts it but the URL in `process.argv` is not read (pre-existing; only
+`second-instance` handles links). Not a regression of the rename.
 
 **Do not drop `taxone-desktop`** until the web app has emitted
 `quework-desktop://` for a full release cycle and no install older than v1.3.0
@@ -859,7 +870,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 - `appId: com.taxone.desktop` — unchanged by the rebrand; see [The AppUserModelId](#the-appusermodelid)
 - `artifactName: TaxOne-Desktop-Setup.${ext}` — an identifier, coupled to `routes/web.php:540` in `abr9t/taxone`; see [The installer filename](#the-installer-filename)
 - `productName: Quework Desktop` — drives the executable name (`Quework Desktop.exe`), but **not** `userData`; see [The userData pin](#the-userdata-pin). **The install directory is not renamed on upgrade.** Installing v1.2.0 over v1.1.5 reuses the existing directory: the exe lands at `%LOCALAPPDATA%\Programs\TaxOne Desktop\Quework Desktop.exe`, the old directory name is kept, and no `TaxOne Desktop.exe` remains in it (observed on a live upgrade). A fresh install is expected to use `%LOCALAPPDATA%\Programs\Quework Desktop` (electron-builder's default for `productName`; not verified). **The directory name is therefore not a reliable indicator of version** — check the exe name or its version resource instead.
-- Custom protocols `quework-desktop://` and `taxone-desktop://` registered in `electron-builder.yml` under `protocols`; see [Deep-link schemes](#deep-link-schemes)
+- Custom protocols `quework-desktop://` and `taxone-desktop://`: registered on Windows by `main.js` at launch (the NSIS installer ignores `electron-builder.yml`'s `protocols`, which only the macOS/Linux targets read); see [Deep-link schemes](#deep-link-schemes)
 - Icon: `assets/icon.ico` (installer + NSIS), `assets/icon.png` (app window)
 - Files included: `src/**/*`, `assets/**/*`, `node_modules/**/*`, `package.json`
 - Output: `dist/`
