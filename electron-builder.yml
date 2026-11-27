@@ -10,9 +10,13 @@ files:
   - node_modules/**/*
   - package.json
 
+# IDENTIFIERS, not branding: one HKCU\Software\Classes\<scheme> key each.
+# quework-desktop is the current name; taxone-desktop stays so existing links
+# and older web builds keep opening the app. See src/protocol.js.
 protocols:
   - name: Quework Desktop
     schemes:
+      - quework-desktop
       - taxone-desktop
 
 win:

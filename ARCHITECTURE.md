@@ -1,6 +1,6 @@
 # Quework Desktop — Architecture
 
-Electron companion app for [Quework](https://taxone.cpa). Two core features:
+Electron companion app for [Quework](https://quework.com). Two core features:
 
 1. **Watch Folder** — monitors a local directory and prompts per-file upload to a matched client
 2. **File Upload Tool** — bulk import with drag-and-drop, client matching, persistent queue, throttled uploads
@@ -175,7 +175,7 @@ tracked in `BACKLOG.md`.
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **Single-instance lock** — `app.requestSingleInstanceLock()`, second instance either handles `taxone-desktop://` auth URL or opens File Upload window
+- **Single-instance lock** — `app.requestSingleInstanceLock()`, second instance either handles a `quework-desktop://` (or legacy `taxone-desktop://`) URL or opens File Upload window
 - **System tray app** — no dock icon on macOS (`app.dock.hide()`), single-click tray opens File Upload window
 - **Main process owns all state** — queues, watchers, uploads
 - **Renderer processes are display-only** — communicate via IPC only
@@ -217,14 +217,14 @@ File Upload exposes `window.electronAPI.migration` namespace.
 
 **1. Browser OAuth flow (primary):**
 - User enters server URL → clicks "Sign in with Browser" → `auth:open-browser-sign-in` validates the URL, then opens `{canonicalUrl}/desktop/authorize` in the default browser via `shell.openExternal()`. The renderer never passes a full URL to be opened
-- Quework web app authenticates user, then redirects to `taxone-desktop://auth?token=X&url=Y`
-- Custom protocol registered via `app.setAsDefaultProtocolClient('taxone-desktop')` (with `process.execPath` arg in dev mode)
+- Quework web app authenticates user, then redirects to `quework-desktop://auth?token=X&url=Y` (`taxone-desktop://auth?...` from web builds before the switch; both are handled the same way)
+- Both schemes registered via `app.setAsDefaultProtocolClient()` at every launch (with `process.execPath` arg in dev mode); see [Deep-link schemes](#deep-link-schemes)
 - `handleAuthUrl()` parses URL, saves token + server URL, configures uploader, starts watching, inits migration queue, opens File Upload window
 - Sends `migration:auth-changed` event to File Upload window with `true`
 - Shows "Successfully signed in" OS notification
 
-**2. `taxone-desktop://connect` handler:**
-- Web app can link to `taxone-desktop://connect?url=X` to pre-fill server URL. The URL goes through `applyServerUrlFromLink()` in `main.js`: validated, then — if the install is already paired with a different host — confirmed by a dialog before it is stored
+**2. `quework-desktop://connect` handler:**
+- Web app can link to `quework-desktop://connect?url=X` (or the legacy `taxone-desktop://connect?url=X`) to pre-fill server URL. The URL goes through `applyServerUrlFromLink()` in `main.js`: validated, then — if the install is already paired with a different host — confirmed by a dialog before it is stored
 - If already signed in (token exists), opens File Upload window directly
 - If not signed in, opens login window (with server URL pre-filled)
 
@@ -435,7 +435,7 @@ Three-tab interface: **Import**, **Queue**, **History**.
 
 | Path | Purpose |
 |------|---------|
-| `GET` | `/desktop/authorize` | Browser sign-in page, redirects to `taxone-desktop://auth?token=X&url=Y` after auth |
+| `GET` | `/desktop/authorize` | Browser sign-in page, redirects to `quework-desktop://auth?token=X&url=Y` after auth (`taxone-desktop://` before the web switch) |
 
 ---
 
@@ -514,6 +514,26 @@ The v1.1.5 → v1.2.0 rebrand renamed the *display* name from TaxOne to Quework.
 Three strings look like branding and are not: they are identifiers that other
 things resolve against. Renaming any of them breaks something silently, with no
 build error and no failing test.
+
+### Deep-link schemes
+
+The app answers `quework-desktop://` (since v1.3.0) and `taxone-desktop://`
+(the original name), with the same handler. Both are identifiers:
+`electron-builder.yml` writes one `HKCU\Software\Classes\<scheme>` key per
+scheme at install, `main.js` re-registers both at every launch, and
+`src/protocol.js` owns the list. `test/protocol.test.js` fails if the installer
+and the app disagree.
+
+**Do not drop `taxone-desktop`** until the web app has emitted
+`quework-desktop://` for a full release cycle and no install older than v1.3.0
+is left. An app that only knows the old name ignores a `quework-desktop://`
+link, with no error, so the order is: release a desktop version that
+registers both, let installs update, and only then switch the web app's links.
+
+A second scheme is a second way in, not a second set of rules. Every URL in
+either scheme goes through `handleAuthUrl()`, which refuses any other scheme,
+then the same `validateServerUrl()` allowlist and host-change dialog.
+`test/startup-gating.test.js` runs both schemes through the real `main.js`.
 
 ### The userData pin
 
@@ -839,7 +859,7 @@ Single-click on tray icon opens File Upload window. Right-click opens context me
 - `appId: com.taxone.desktop` — unchanged by the rebrand; see [The AppUserModelId](#the-appusermodelid)
 - `artifactName: TaxOne-Desktop-Setup.${ext}` — an identifier, coupled to `routes/web.php:540` in `abr9t/taxone`; see [The installer filename](#the-installer-filename)
 - `productName: Quework Desktop` — drives the executable name (`Quework Desktop.exe`), but **not** `userData`; see [The userData pin](#the-userdata-pin). **The install directory is not renamed on upgrade.** Installing v1.2.0 over v1.1.5 reuses the existing directory: the exe lands at `%LOCALAPPDATA%\Programs\TaxOne Desktop\Quework Desktop.exe`, the old directory name is kept, and no `TaxOne Desktop.exe` remains in it (observed on a live upgrade). A fresh install is expected to use `%LOCALAPPDATA%\Programs\Quework Desktop` (electron-builder's default for `productName`; not verified). **The directory name is therefore not a reliable indicator of version** — check the exe name or its version resource instead.
-- Custom protocol `taxone-desktop://` registered in `electron-builder.yml` under `protocols`
+- Custom protocols `quework-desktop://` and `taxone-desktop://` registered in `electron-builder.yml` under `protocols`; see [Deep-link schemes](#deep-link-schemes)
 - Icon: `assets/icon.ico` (installer + NSIS), `assets/icon.png` (app window)
 - Files included: `src/**/*`, `assets/**/*`, `node_modules/**/*`, `package.json`
 - Output: `dist/`
@@ -1058,7 +1078,7 @@ For one firm and a handful of installs it is deferred; see `BACKLOG.md`.
 | 30s network polling for auto-reconnect | Retries failed files automatically when connection is restored |
 | `webUtils.getPathForFile()` | Electron's API for getting absolute paths from drag-and-drop files |
 | Browser OAuth as primary login | Avoids users having to find and copy API tokens manually |
-| `taxone-desktop://connect` protocol | Allows web app to deep-link into desktop app for onboarding |
+| `quework-desktop://connect` protocol, `taxone-desktop://` kept as an alias | Allows web app to deep-link into desktop app for onboarding; the alias keeps old links and older web builds working |
 | Offline-tolerant startup | `network_error` or `tls_error` on token verify doesn't force re-login — cached credentials used; `tls_error` also shows a notification and the tray error state |
 | Stored host validated at startup | Rejected host and both token copies cleared before anything authenticated; nothing starts until a valid sign-in |
 | Two separate file upload mechanisms | Watch folder for day-to-day (per-file), File Upload tool for bulk imports |
@@ -1071,7 +1091,7 @@ For one firm and a handful of installs it is deferred; see `BACKLOG.md`.
 | Certificate verification never relaxed | The token and client documents ride on it, and unsigned builds have nothing else vouching for the server |
 | One client factory (`createApiClient`) | Host validation and `rejectUnauthorized: true` in one place no caller can skip |
 | Dev CA via `NODE_EXTRA_CA_CERTS`, not `rejectUnauthorized: false` | Adds a trust anchor in dev without turning any check off; the launcher lives outside the packaged files |
-| Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `taxone-desktop://` is a protocol anyone can link to. A firm on any other host is signed out on upgrade and cannot sign in until the allowlist is widened (see [Persisted host, checked on read](#persisted-host-checked-on-read)) |
+| Server URL allowlist in `validateServerUrl` | https on a single-label `*.quework.app` host only; the stored host is where the bearer token is sent, and `quework-desktop://` / `taxone-desktop://` are protocols anyone can link to. A firm on any other host is signed out on upgrade and cannot sign in until the allowlist is widened (see [Persisted host, checked on read](#persisted-host-checked-on-read)) |
 | Auth-changed event propagation | Single source of truth for auth state across all windows |
 | Updates download silently, never restart on their own | A tray app may be uploading a client's files at any moment; install on quit, or from the tray when `restartBlockers()` finds nothing in flight |
 | Updates start before the host check | A signed-out install (rejected host, no sign-in yet) is exactly the one a fixed release may be for; updates go to GitHub and carry no token |
@@ -1094,6 +1114,7 @@ taxone-desktop/
 │   └── tray-icon.png             # System tray icon
 ├── src/
 │   ├── main.js                   # App entry — inherited-TLS-override guard, userData pin, lifecycle, tray, windows, IPC handlers, queue init, protocol handler
+│   ├── protocol.js               # The deep-link schemes (quework-desktop, taxone-desktop) and the command-line match
 │   ├── auth.js                   # Token storage (keytar + electron-store fallback), server URL allowlist, legacy-host migration, persisted-host check, userData tripwire
 │   ├── startup.js                # resolveStartup — login-or-resume decision, stored host checked before the first request
 │   ├── reconnect.js              # One never-rejecting tick of the 30s reconnect loop

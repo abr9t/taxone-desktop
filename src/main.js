@@ -40,6 +40,7 @@ const { retryFailedIfOnline } = require('./reconnect');
 const { resolveStartup } = require('./startup');
 const { createUpdateController } = require('./updater');
 const { isFirstLaunchOfVersion } = require('./update-policy');
+const { PROTOCOL_SCHEMES, findProtocolUrl, isProtocolUrl } = require('./protocol');
 const Store = require('electron-store');
 const appStore = new Store();
 
@@ -74,11 +75,16 @@ const pendingFiles = [];
 
 // ─── Custom Protocol ─────────────────────────────────────────────
 
-if (process.defaultApp) {
-    app.setAsDefaultProtocolClient('taxone-desktop',
-        process.execPath, [path.resolve(process.argv[1])]);
-} else {
-    app.setAsDefaultProtocolClient('taxone-desktop');
+// Both schemes, every launch: quework-desktop:// is the current name and
+// taxone-desktop:// stays for links and web builds that still use it. See
+// src/protocol.js before removing either.
+for (const scheme of PROTOCOL_SCHEMES) {
+    if (process.defaultApp) {
+        app.setAsDefaultProtocolClient(scheme,
+            process.execPath, [path.resolve(process.argv[1])]);
+    } else {
+        app.setAsDefaultProtocolClient(scheme);
+    }
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -87,7 +93,7 @@ if (!gotLock) {
 }
 
 app.on('second-instance', (event, commandLine) => {
-    const url = commandLine.find(arg => arg.startsWith('taxone-desktop://'));
+    const url = findProtocolUrl(commandLine);
     if (url) {
         handleAuthUrl(url);
     } else {
@@ -136,6 +142,13 @@ async function applyServerUrlFromLink(rawUrl) {
 
 async function handleAuthUrl(url) {
     try {
+        // Only our own schemes reach here today (findProtocolUrl), but the
+        // check belongs next to the parse, so no future caller can hand this
+        // a URL in some other scheme.
+        if (!isProtocolUrl(url)) {
+            debugLog('[protocol] Ignored a URL that is not in one of our schemes');
+            return;
+        }
         const parsed = new URL(url);
 
         if (parsed.hostname === 'connect') {
@@ -156,7 +169,8 @@ async function handleAuthUrl(url) {
             return;
         }
 
-        // Default: auth handler (taxone-desktop://auth?token=X&url=Y)
+        // Default: auth handler (quework-desktop://auth?token=X&url=Y, or
+        // the same under taxone-desktop://)
         const token = parsed.searchParams.get('token');
         const rawServerUrl = parsed.searchParams.get('url');
 

@@ -34,7 +34,7 @@ let seen;
 function freshSeen() {
     return {
         windows: [], queues: 0, autoResumes: 0, watchStarts: 0, intervals: [], notifications: [], updateChecks: 0,
-        menu: null, dialogs: [], installs: [], onFile: null,
+        menu: null, dialogs: [], installs: [], onFile: null, protocols: [], errorBoxes: [],
         order: [],
     };
 }
@@ -47,7 +47,8 @@ const electron = {
     app: {
         isPackaged: true,
         getPath: n => (n === 'appData' ? 'C:/fake/AppData/Roaming' : 'C:/fake/AppData/Roaming/TaxOne Desktop'),
-        setPath() {}, setAsDefaultProtocolClient() {}, requestSingleInstanceLock: () => true,
+        setPath() {}, setAsDefaultProtocolClient: (...args) => { seen.protocols.push(args); return true; },
+        requestSingleInstanceLock: () => true,
         quit() {}, on: (ev, fn) => { appListeners[ev] = fn; }, setName() {}, setAppUserModelId() {},
         whenReady: () => new Promise(r => { readyResolve = r; }),
         setLoginItemSettings() {}, getLoginItemSettings: () => ({ openAtLogin: false, launchItems: [] }),
@@ -66,7 +67,7 @@ const electron = {
     nativeImage: { createFromPath: () => ({}), createEmpty: () => ({}) },
     dialog: {
         showMessageBox: async o => { seen.dialogs.push(o); return { response: 0 }; },
-        showErrorBox() {}, showOpenDialog: async () => ({ canceled: true }),
+        showErrorBox: (title, body) => { seen.errorBoxes.push(body); }, showOpenDialog: async () => ({ canceled: true }),
     },
     shell: { openExternal() {}, openPath() {} },
     Notification: class { constructor(o) { seen.notifications.push(o); } show() {} },
@@ -210,6 +211,57 @@ async function main() {
     assert.strictEqual(await handlers['auth:get-startup-notice'](), null);
     ok('control: a valid host configures the client, starts the watcher, the queue and the 30s loop');
     ok('launch order: tray, then startUpdates, then the host check, and only then electron-updater is loaded');
+
+    // ─── Deep links: quework-desktop:// and the taxone-desktop:// alias ──
+    {
+        assert.deepStrictEqual(seen.protocols.map(a => a[0]), ['quework-desktop', 'taxone-desktop'],
+            'both schemes are registered at launch, the current name first');
+        ok('launch registers quework-desktop:// and keeps taxone-desktop:// registered');
+
+        // A browser sign-in hands the token back in either scheme, and in any
+        // letter case Windows passes it through in.
+        for (const scheme of ['quework-desktop', 'taxone-desktop', 'Quework-Desktop']) {
+            await launch({});
+            const link = `${scheme}://auth?token=deep-tok&url=${encodeURIComponent(NEW)}`;
+            appListeners['second-instance']({}, ['Quework Desktop.exe', '--flag', link]);
+            await tick();
+            assert.strictEqual(stubs.keychain.get('TaxOneDesktop/api-token'), 'deep-tok', `${scheme}: token saved`);
+            assert.strictEqual(stubs.store.get('serverUrl'), NEW, `${scheme}: host saved`);
+            assert.ok(seen.windows.some(w => w.file === 'migration.html'), `${scheme}: File Upload opens`);
+            assert.ok(seen.notifications.some(n => n.body === 'Successfully signed in.'), `${scheme}: notified`);
+            ok(`${scheme}://auth signs the app in`);
+        }
+
+        // The same rules for the new scheme: a host off the allowlist is
+        // refused and its token never stored.
+        await launch({});
+        appListeners['second-instance']({}, ['Quework Desktop.exe',
+            `quework-desktop://auth?token=evil-tok&url=${encodeURIComponent('https://evil.example')}`]);
+        await tick();
+        assert.strictEqual(stubs.keychain.size, 0, 'no token saved for a rejected host');
+        assert.strictEqual(stubs.store.has('serverUrl'), false, 'no host saved');
+        assert.strictEqual(seen.errorBoxes.length, 1, 'the user is told the link was ignored');
+        ok('quework-desktop://auth with a host off the allowlist: refused, nothing stored');
+
+        // ...and re-pointing a paired install still asks first.
+        await launch({ serverUrl: NEW, token: 'tok' });
+        appListeners['second-instance']({}, ['Quework Desktop.exe',
+            `quework-desktop://connect?url=${encodeURIComponent('https://otherfirm.quework.app')}`]);
+        await tick();
+        assert.strictEqual(seen.dialogs.length, 1, 'the host-change dialog is shown');
+        assert.strictEqual(stubs.store.get('serverUrl'), NEW, 'declined: the host is unchanged');
+        ok('quework-desktop://connect to another firm: asks first, and Cancel keeps the host');
+
+        // Any other scheme is not a deep link: the token in it is never read.
+        await launch({});
+        appListeners['second-instance']({}, ['Quework Desktop.exe',
+            `quework://auth?token=x-tok&url=${encodeURIComponent(NEW)}`,
+            `evil-desktop://auth?token=x-tok&url=${encodeURIComponent(NEW)}`]);
+        await tick();
+        assert.strictEqual(stubs.keychain.size, 0, 'nothing saved');
+        assert.strictEqual(stubs.store.has('serverUrl'), false);
+        ok('a URL in any other scheme is not treated as a deep link');
+    }
 
     // ─── A rejected host starts none of it ─────────────────────────
     for (const bad of ['https://evil.example', 'https://caputa.quework.app.evil.com']) {
