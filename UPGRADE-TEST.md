@@ -1223,3 +1223,41 @@ if ($hit.Count -ge 1) { 'PASS: the GitHub leg works (TLS, /releases/latest, late
 That is the first proof of the GitHub leg. The first real update (1.2.0 →
 1.2.1) is the second: watch `debug.log` for `[updater]` lines on the first
 machine that gets it.
+
+---
+
+## 7. v1.3.0: the quework-desktop:// scheme
+
+v1.3.0 registers `quework-desktop://` beside `taxone-desktop://`. Run this on
+a machine upgraded from v1.2.0 (the auto-update, or the installer run over it).
+
+- [ ] **Both schemes are registered, to the same exe.** Launch the upgraded
+      app once (the app registers them at launch; the installer does not),
+      then run the script below.
+
+```powershell
+foreach ($s in 'quework-desktop', 'taxone-desktop') {
+    $cmd = (Get-ItemProperty "HKCU:\Software\Classes\$s\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+    if (-not $cmd) { "${s}: FAIL: not registered"; continue }
+    if ($cmd -notmatch '^"?(.+?\.exe)"?') { "${s}: FAIL: cannot parse: $cmd"; continue }
+    if (Test-Path -LiteralPath $Matches[1] -PathType Leaf) { "${s}: PASS -> $($Matches[1])" } else { "${s}: FAIL: no exe at $($Matches[1])" }
+}
+```
+
+Expected: two PASS lines naming the same `Quework Desktop.exe`.
+
+- [ ] **New scheme, with the app running.** Win+R:
+      `quework-desktop://connect?url=https://caputa.quework.app`
+      → the File Upload window comes to the front (signed in), no dialog.
+- [ ] **Old scheme still works.** Win+R:
+      `taxone-desktop://connect?url=https://caputa.quework.app` → the same.
+- [ ] **New scheme, rejected link.** Win+R:
+      `quework-desktop://connect?url=https://evil.example`
+      → "This link was ignored", `serverUrl` unchanged.
+- [ ] **New scheme, host change.** Win+R:
+      `quework-desktop://connect?url=https://otherfirm.quework.app`
+      → "Change Quework server?". **Cancel it.** `serverUrl` unchanged.
+- [ ] **Browser sign-in** (Settings → Sign out first, then "Sign in with
+      Browser"): the browser page hands back to the app and it signs in. Before
+      the web switch the page uses `taxone-desktop://`; after it,
+      `quework-desktop://`. Both must work on v1.3.0.

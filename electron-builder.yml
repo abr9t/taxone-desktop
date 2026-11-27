@@ -10,9 +10,15 @@ files:
   - node_modules/**/*
   - package.json
 
+# macOS / Linux / AppX only: electron-builder's NSIS target ignores this key,
+# so on Windows the schemes are registered by main.js at every launch
+# (app.setAsDefaultProtocolClient), never by the installer. Kept equal to
+# src/protocol.js (test/protocol.test.js). quework-desktop is the current
+# name; taxone-desktop stays so existing links and older web builds work.
 protocols:
   - name: Quework Desktop
     schemes:
+      - quework-desktop
       - taxone-desktop
 
 win:
